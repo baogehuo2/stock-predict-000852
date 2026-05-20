@@ -1,0 +1,105 @@
+project:
+  name: zz1000_predict
+  timezone: Asia/Shanghai
+  target_index: "000852"
+  start_date: "2015-01-01"
+  output_disclaimer: "本报告仅用于量化研究与信息整理，不构成投资建议。"
+
+paths:
+  logs: logs
+  models: models
+  reports: data/reports
+  raw: data/raw
+  processed: data/processed
+
+run:
+  skip_existing: true
+  fail_fast_llm: true
+  default_report_format: html
+
+model:
+  horizons: [3, 5, 7]
+  primary_horizon: 5
+  direction_threshold:
+    mode: dynamic
+    volatility_multiplier: 0.4
+  splits:
+    train_start: "2015-01-01"
+    train_end: "2020-12-31"
+    valid_start: "2021-01-01"
+    valid_end: "2022-12-31"
+    test_start: "2023-01-01"
+  high_confidence_threshold: 0.6
+  random_state: 42
+
+sentiment:
+  guba_pages: 5
+  keywords:
+    - 中证1000
+    - 小盘
+    - 政策
+    - 流动性
+    - 成长
+    - 量化
+    - ETF
+
+news:
+  keyword_groups:
+    index_style:
+      - 中证1000
+      - 中证2000
+      - 小盘
+      - 小微盘
+      - 微盘
+      - 成长股
+    liquidity:
+      - 降准
+      - 降息
+      - 流动性
+      - 逆回购
+      - MLF
+      - LPR
+      - 社融
+      - 信贷
+      - 货币政策
+    policy_market:
+      - 证监会
+      - 活跃资本市场
+      - IPO
+      - 再融资
+      - 减持
+      - 融券
+      - 转融通
+      - 量化交易
+      - 程序化交易
+      - 印花税
+    growth_industry:
+      - 人工智能
+      - AI
+      - 半导体
+      - 芯片
+      - 算力
+      - 机器人
+      - 新能源
+      - 储能
+      - 军工
+      - 创新药
+    macro:
+      - GDP
+      - CPI
+      - PPI
+      - PMI
+      - 出口
+      - 消费
+      - 房地产
+      - 汇率
+      - 美联储
+      - 美债
+  max_items_per_source: 80
+
+llm:
+  base_url: "https://api.deepseek.com"
+  model: "deepseek-reasoner"
+  timeout_seconds: 90
+  temperature: 0
+  api_key_secret_path: "llm.api_key"

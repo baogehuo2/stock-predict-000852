@@ -1,0 +1,8 @@
+mysql:
+  host: localhost
+  port: 3306
+  user: root
+  database: zz1000_predict
+  charset: utf8mb4
+  password_secret_path: "database.password"
+

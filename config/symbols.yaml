@@ -1,0 +1,78 @@
+indices:
+  - code: "000852"
+    name: 中证1000
+  - code: "000300"
+    name: 沪深300
+  - code: "000905"
+    name: 中证500
+  - code: "000001"
+    name: 上证指数
+  - code: "399006"
+    name: 创业板指
+  - code: "000688"
+    name: 科创50
+
+etfs:
+  - code: "159845"
+    name: 中证1000ETF华夏
+    category: 中证1000ETF
+  - code: "510300"
+    name: 华泰柏瑞沪深300ETF
+    category: 沪深300ETF
+  - code: "510500"
+    name: 南方中证500ETF
+    category: 中证500ETF
+  - code: "159915"
+    name: 易方达创业板ETF
+    category: 创业板ETF
+  - code: "588000"
+    name: 华夏科创50ETF
+    category: 科创50ETF
+
+index_futures:
+  - code: IM0
+    name: 中证1000股指期货主力连续
+    category: index_future
+  - code: IC0
+    name: 中证500股指期货主力连续
+    category: index_future
+  - code: IF0
+    name: 沪深300股指期货主力连续
+    category: index_future
+
+commodity_futures:
+  - code: CU0
+    name: 铜主力连续
+    category: commodity
+  - code: SC0
+    name: 原油主力连续
+    category: commodity
+  - code: AU0
+    name: 黄金主力连续
+    category: commodity
+
+guba_bars:
+  - bar_name: 中证1000吧
+    url: "https://guba.eastmoney.com/list,zssh000852.html"
+    topic: 中证1000
+  - bar_name: 沪深300ETF华泰柏瑞吧
+    url: "https://guba.eastmoney.com/list,of510300.html"
+    topic: 沪深300ETF
+  - bar_name: 中证500ETF南方吧
+    url: "https://guba.eastmoney.com/list,of510500.html"
+    topic: 中证500ETF
+  - bar_name: 创业板ETF易方达吧
+    url: "https://guba.eastmoney.com/list,of159915.html"
+    topic: 创业板ETF
+  - bar_name: 科创50ETF华夏吧
+    url: "https://guba.eastmoney.com/list,sh588000.html"
+    topic: 科创50ETF
+
+news_sources:
+  - name: 东方财富财经新闻
+    url: "https://finance.eastmoney.com/"
+  - name: 新浪财经
+    url: "https://finance.sina.com.cn/"
+  - name: 财联社网页
+    url: "https://www.cls.cn/"
+

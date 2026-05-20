@@ -1,0 +1,905 @@
+中证1000短期趋势预测系统技术方案
+一、项目目标
+
+开发一个面向中证1000指数的短期趋势预测系统，预测未来：
+
+3个交易日
+5个交易日
+7个交易日
+
+输出内容包括：
+
+1. 涨跌方向：上涨 / 下跌 / 震荡
+2. 预测涨跌幅
+3. 置信度
+4. 技术面原因
+5. 舆情热度原因
+6. 大事件/预期差原因
+7. 历史相似事件参考
+8. 风险提示
+
+本项目不使用 Tushare，优先使用免费数据源。
+
+二、核心业务逻辑
+
+系统不是简单做新闻情绪分析，而是判断：
+
+技术趋势
++ 股民情绪热度
++ 新闻事件扩散
++ 预期是否已经交易
++ 官方消息是否存在利好兑现风险
++ 历史类似事件后续走势
+
+核心判断框架：
+
+预期形成 → 资金提前交易 → 股民讨论升温 → 新闻扩散 → 官方确认 → 利好兑现/继续发酵
+
+中证1000属于小盘风格指数，短期受风险偏好、情绪资金和政策预期影响较大，因此需要同时结合：
+
+技术指标
+股吧热度
+新闻事件
+商品/股指期货情绪
+历史相似事件
+三、技术栈
+Python 3.10+
+MySQL 5.7/8.0
+pandas
+numpy
+akshare
+requests
+beautifulsoup4
+selenium 或 playwright
+SQLAlchemy / PyMySQL
+scikit-learn
+lightgbm
+catboost，可选
+jieba
+snownlp 或中文金融情绪模型，可选
+openpyxl
+jinja2
+matplotlib
+APScheduler 或 cron / Windows任务计划
+
+大模型接口：
+
+OpenAI兼容接口
+本地大模型接口也可以
+主要用于新闻事件抽取、预期差判断、股吧主题归纳、日报解释
+四、数据源设计
+1. 行情数据
+
+使用 AKShare。
+
+采集对象：
+
+中证1000：000852
+沪深300：000300
+中证500：000905
+上证指数：000001
+创业板指：399006
+科创50：000688
+
+用途：
+
+中证1000作为预测目标
+其他指数作为风格对照
+
+采集字段：
+
+trade_date
+index_code
+index_name
+open
+high
+low
+close
+pre_close
+pct_chg
+volume
+amount
+2. ETF数据
+
+重点采集：
+
+中证1000ETF
+沪深300ETF
+中证500ETF
+创业板ETF
+科创50ETF
+
+用途：
+
+观察真实交易热度
+验证散户情绪
+构造ETF成交额变化因子
+3. 股指期货数据
+
+重点采集：
+
+IM：中证1000股指期货
+IC：中证500股指期货
+IF：沪深300股指期货
+
+用途：
+
+观察小盘预期
+计算IM/IF强弱
+计算IM基差、持仓变化、成交变化
+4. 商品期货数据
+
+建议采集：
+
+螺纹钢
+铁矿石
+玻璃
+纯碱
+碳酸锂
+铜
+原油
+黄金
+
+用途：
+
+商品风险偏好
+周期情绪
+避险情绪
+产业预期
+5. 东方财富股吧数据
+
+第一版重点做：
+
+中证1000ETF吧
+沪深300ETF吧
+中证500ETF吧
+创业板ETF吧
+科创50ETF吧
+部分热门小盘股吧
+
+采集字段：
+
+post_id
+bar_name
+publish_time
+title
+content
+read_count
+comment_count
+like_count
+author
+url
+crawl_time
+
+第一版不用全量爬取，只采集首页或前几页即可。
+
+核心指标：
+
+发帖量
+评论量
+阅读量
+热度变化率
+热度Z-score
+看多/看空比例
+分歧度
+是否过热
+6. 新闻数据
+
+免费来源：
+
+东方财富财经新闻
+新浪财经
+财联社网页
+证券时报
+中国证券报
+证监会官网
+国务院官网
+央行官网
+发改委官网
+上交所/深交所
+
+采集字段：
+
+news_id
+source
+publish_time
+title
+content
+url
+crawl_time
+
+第一版可以只采标题和摘要，后续再扩展全文。
+
+五、MySQL数据库设计
+
+数据库名建议：
+
+CREATE DATABASE zz1000_predict DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+1. 指数行情表：market_index_daily
+CREATE TABLE market_index_daily (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    trade_date DATE NOT NULL,
+    index_code VARCHAR(20) NOT NULL,
+    index_name VARCHAR(50),
+    open DECIMAL(18,4),
+    high DECIMAL(18,4),
+    low DECIMAL(18,4),
+    close DECIMAL(18,4),
+    pre_close DECIMAL(18,4),
+    pct_chg DECIMAL(10,4),
+    volume DECIMAL(20,4),
+    amount DECIMAL(20,4),
+    data_source VARCHAR(50),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_index_daily (trade_date, index_code),
+    KEY idx_trade_date (trade_date),
+    KEY idx_index_code (index_code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+2. ETF行情表：market_etf_daily
+CREATE TABLE market_etf_daily (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    trade_date DATE NOT NULL,
+    etf_code VARCHAR(20) NOT NULL,
+    etf_name VARCHAR(100),
+    open DECIMAL(18,4),
+    high DECIMAL(18,4),
+    low DECIMAL(18,4),
+    close DECIMAL(18,4),
+    pct_chg DECIMAL(10,4),
+    volume DECIMAL(20,4),
+    amount DECIMAL(20,4),
+    turnover DECIMAL(10,4),
+    data_source VARCHAR(50),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_etf_daily (trade_date, etf_code),
+    KEY idx_trade_date (trade_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+3. 期货行情表：market_futures_daily
+CREATE TABLE market_futures_daily (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    trade_date DATE NOT NULL,
+    future_code VARCHAR(30) NOT NULL,
+    future_name VARCHAR(100),
+    category VARCHAR(50),
+    open DECIMAL(18,4),
+    high DECIMAL(18,4),
+    low DECIMAL(18,4),
+    close DECIMAL(18,4),
+    settle DECIMAL(18,4),
+    pct_chg DECIMAL(10,4),
+    volume DECIMAL(20,4),
+    open_interest DECIMAL(20,4),
+    amount DECIMAL(20,4),
+    data_source VARCHAR(50),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_future_daily (trade_date, future_code),
+    KEY idx_trade_date (trade_date),
+    KEY idx_future_code (future_code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+4. 技术指标表：market_feature_daily
+CREATE TABLE market_feature_daily (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    trade_date DATE NOT NULL,
+    index_code VARCHAR(20) NOT NULL,
+
+    ret_1d DECIMAL(12,6),
+    ret_3d DECIMAL(12,6),
+    ret_5d DECIMAL(12,6),
+    ret_10d DECIMAL(12,6),
+
+    ma5_gap DECIMAL(12,6),
+    ma10_gap DECIMAL(12,6),
+    ma20_gap DECIMAL(12,6),
+
+    macd DECIMAL(12,6),
+    macd_signal DECIMAL(12,6),
+    macd_hist DECIMAL(12,6),
+
+    rsi6 DECIMAL(12,6),
+    rsi14 DECIMAL(12,6),
+    atr14 DECIMAL(12,6),
+    boll_width DECIMAL(12,6),
+
+    amount_zscore_20d DECIMAL(12,6),
+    volatility_10d DECIMAL(12,6),
+    volatility_20d DECIMAL(12,6),
+
+    relative_hs300 DECIMAL(12,6),
+    relative_zz500 DECIMAL(12,6),
+    relative_cyb DECIMAL(12,6),
+
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    UNIQUE KEY uk_market_feature (trade_date, index_code),
+    KEY idx_trade_date (trade_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+5. 股吧原始数据表：sentiment_guba_raw
+CREATE TABLE sentiment_guba_raw (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    post_id VARCHAR(100),
+    source VARCHAR(50),
+    bar_name VARCHAR(100),
+    publish_time DATETIME,
+    trade_date DATE,
+    title TEXT,
+    content MEDIUMTEXT,
+    read_count INT,
+    comment_count INT,
+    like_count INT,
+    author VARCHAR(100),
+    url TEXT,
+    crawl_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_guba_post (post_id),
+    KEY idx_trade_date (trade_date),
+    KEY idx_bar_name (bar_name),
+    KEY idx_publish_time (publish_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+6. 新闻原始表：news_raw
+CREATE TABLE news_raw (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    source VARCHAR(50),
+    publish_time DATETIME,
+    trade_date DATE,
+    title TEXT,
+    content MEDIUMTEXT,
+    url TEXT,
+    crawl_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_trade_date (trade_date),
+    KEY idx_source (source),
+    KEY idx_publish_time (publish_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+7. 舆情日因子表：sentiment_feature_daily
+CREATE TABLE sentiment_feature_daily (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    trade_date DATE NOT NULL,
+    topic VARCHAR(100),
+    source VARCHAR(50),
+
+    post_count INT,
+    comment_count INT,
+    read_count BIGINT,
+    heat_score DECIMAL(12,6),
+
+    heat_zscore_20d DECIMAL(12,6),
+    heat_zscore_60d DECIMAL(12,6),
+    heat_change_3d DECIMAL(12,6),
+
+    sentiment_score DECIMAL(12,6),
+    positive_ratio DECIMAL(12,6),
+    negative_ratio DECIMAL(12,6),
+    disagreement DECIMAL(12,6),
+
+    emotion_stage VARCHAR(50),
+    top_keywords TEXT,
+
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    UNIQUE KEY uk_sentiment_feature (trade_date, topic, source),
+    KEY idx_trade_date (trade_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+8. 大事件表：event_daily
+CREATE TABLE event_daily (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    trade_date DATE NOT NULL,
+    event_name VARCHAR(200),
+    event_type VARCHAR(50),
+    event_stage VARCHAR(50),
+    expectation_level VARCHAR(50),
+    surprise_level VARCHAR(50),
+    affected_style VARCHAR(50),
+    impact_direction VARCHAR(20),
+    impact_strength INT,
+    event_score DECIMAL(12,6),
+    llm_reason TEXT,
+    source_ids TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_trade_date (trade_date),
+    KEY idx_event_type (event_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+9. 建模数据集表：model_dataset_daily
+CREATE TABLE model_dataset_daily (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    trade_date DATE NOT NULL,
+    index_code VARCHAR(20) NOT NULL,
+
+    feature_json JSON,
+
+    future_ret_3d DECIMAL(12,6),
+    future_ret_5d DECIMAL(12,6),
+    future_ret_7d DECIMAL(12,6),
+
+    label_3d VARCHAR(20),
+    label_5d VARCHAR(20),
+    label_7d VARCHAR(20),
+
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    UNIQUE KEY uk_model_dataset (trade_date, index_code),
+    KEY idx_trade_date (trade_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+10. 预测结果表：prediction_result
+CREATE TABLE prediction_result (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    trade_date DATE NOT NULL,
+    horizon INT NOT NULL,
+
+    direction_pred VARCHAR(20),
+    return_pred DECIMAL(12,6),
+    return_low DECIMAL(12,6),
+    return_high DECIMAL(12,6),
+    confidence DECIMAL(12,6),
+
+    tech_score DECIMAL(12,6),
+    sentiment_score DECIMAL(12,6),
+    event_score DECIMAL(12,6),
+    similar_event_score DECIMAL(12,6),
+
+    explanation TEXT,
+    risk_warning TEXT,
+
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    UNIQUE KEY uk_prediction (trade_date, horizon),
+    KEY idx_trade_date (trade_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+六、项目目录结构
+zz1000_predict/
+├─ README.md
+├─ requirements.txt
+├─ config/
+│  ├─ config.yaml
+│  ├─ symbols.yaml
+│  ├─ db.yaml
+│  └─ prompt_templates.yaml
+├─ sql/
+│  └─ create_tables.sql
+├─ data/
+│  ├─ raw/
+│  ├─ processed/
+│  └─ reports/
+├─ logs/
+├─ models/
+├─ src/
+│  ├─ common/
+│  │  ├─ db.py
+│  │  ├─ logger.py
+│  │  ├─ config.py
+│  │  └─ utils.py
+│  ├─ collectors/
+│  │  ├─ collect_index_akshare.py
+│  │  ├─ collect_etf_akshare.py
+│  │  ├─ collect_futures_akshare.py
+│  │  ├─ collect_guba_eastmoney.py
+│  │  └─ collect_news.py
+│  ├─ features/
+│  │  ├─ build_market_features.py
+│  │  ├─ build_sentiment_features.py
+│  │  ├─ build_event_features.py
+│  │  └─ build_model_dataset.py
+│  ├─ llm/
+│  │  ├─ llm_client.py
+│  │  ├─ extract_event.py
+│  │  ├─ summarize_guba.py
+│  │  └─ prompts.py
+│  ├─ modeling/
+│  │  ├─ train_lgbm.py
+│  │  ├─ predict.py
+│  │  ├─ similar_event.py
+│  │  └─ evaluate.py
+│  ├─ backtest/
+│  │  ├─ run_backtest.py
+│  │  └─ metrics.py
+│  ├─ report/
+│  │  ├─ generate_excel_report.py
+│  │  └─ generate_html_report.py
+│  └─ main_daily_run.py
+└─ docs/
+   ├─ technical_plan.md
+   ├─ data_dictionary.md
+   └─ development_tasks.md
+七、模块开发顺序
+阶段1：行情数据与技术指标
+
+目标：
+
+先跑通行情采集、技术指标、标签构造、基础回测。
+
+开发任务：
+
+1. 创建MySQL数据库和表
+2. 编写AKShare指数采集脚本
+3. 采集中证1000、沪深300、中证500、创业板指、科创50
+4. 写入market_index_daily
+5. 计算技术指标
+6. 写入market_feature_daily
+7. 构造future_ret_3d/5d/7d和label
+8. 训练LightGBM基础模型
+9. 输出基础回测结果
+
+验收标准：
+
+1. 数据库中有2015年至今指数行情
+2. 技术指标无明显缺失
+3. 可以训练3/5/7日模型
+4. 可以输出方向准确率、MAE、IC
+阶段2：股吧热度
+
+目标：
+
+建立股民情绪和热度因子。
+
+开发任务：
+
+1. 采集东方财富ETF吧首页帖子
+2. 写入sentiment_guba_raw
+3. 按交易日聚合发帖量、评论量、阅读量
+4. 计算heat_score
+5. 计算heat_zscore_20d、heat_zscore_60d、heat_change_3d
+6. 识别情绪阶段：冷启动、预热、发酵、高潮、分歧、兑现、退潮
+7. 写入sentiment_feature_daily
+8. 将舆情因子加入model_dataset_daily
+9. 对比加入舆情前后的回测效果
+
+验收标准：
+
+1. 能每天采集股吧数据
+2. 能生成热度时间序列
+3. 能识别热度异常
+4. 加入模型后可比较效果是否提升
+阶段3：新闻采集与事件抽取
+
+目标：
+
+构建大事件和预期差因子。
+
+开发任务：
+
+1. 采集东方财富、财联社、证券时报等新闻标题
+2. 写入news_raw
+3. 调用大模型抽取事件结构
+4. 判断event_type、event_stage、expectation_level、impact_direction
+5. 计算event_score
+6. 写入event_daily
+7. 加入模型回测
+
+验收标准：
+
+1. 每日新闻能入库
+2. 大模型输出稳定JSON
+3. 事件可量化为event_score
+4. 事件日附近预测结果可单独评估
+阶段4：历史相似事件
+
+目标：
+
+对当前事件找到历史类似情形，统计后续3/5/7日表现。
+
+开发任务：
+
+1. 构造事件向量
+2. 类别变量one-hot
+3. 数值变量标准化
+4. 用cosine similarity匹配历史相似样本
+5. 取Top 20相似事件
+6. 统计后3/5/7日平均收益、上涨概率、最大回撤
+7. 输出相似事件解释
+
+验收标准：
+
+1. 给定一个交易日，可以找到相似历史日期
+2. 可以输出相似日期后3/5/7日收益统计
+3. 预测日报中展示相似事件参考
+阶段5：每日常态化运行
+
+目标：
+
+每天自动运行并生成日报。
+
+每日流程：
+
+15:05 采集行情
+15:15 计算技术指标
+15:30 采集股吧数据
+15:45 采集新闻
+16:00 调用大模型抽取事件
+16:15 构造模型数据
+16:20 模型预测3/5/7日
+16:30 匹配历史相似事件
+16:40 生成Excel和HTML日报
+
+验收标准：
+
+1. 一键运行main_daily_run.py
+2. 自动更新数据
+3. 自动生成prediction_result
+4. 自动输出日报
+5. 日志完整
+6. 失败可重跑
+八、核心特征设计
+1. 技术面特征
+ret_1d
+ret_3d
+ret_5d
+ret_10d
+ma5_gap
+ma10_gap
+ma20_gap
+macd
+macd_signal
+macd_hist
+rsi6
+rsi14
+atr14
+boll_width
+amount_zscore_20d
+volatility_10d
+volatility_20d
+relative_hs300
+relative_zz500
+relative_cyb
+2. 舆情热度特征
+post_count
+comment_count
+read_count
+heat_score
+heat_zscore_20d
+heat_zscore_60d
+heat_change_3d
+sentiment_score
+positive_ratio
+negative_ratio
+disagreement
+emotion_stage
+
+热度分公式：
+
+heat_score = log(1 + post_count) + 0.5 * log(1 + comment_count) + 0.2 * log(1 + read_count)
+3. 情绪阶段规则
+冷启动：热度低于20日均值
+预热：热度上升但未超过1倍标准差
+发酵：heat_zscore_20d > 1
+高潮：heat_zscore_20d > 2 且评论量快速上升
+分歧：热度高但正负情绪接近
+兑现：官方消息落地后，热度高且价格不涨
+退潮：热度下降且价格下跌
+4. 顶部风险规则
+1. 热度极高 + 指数涨不动
+2. 热度极高 + 成交额极高 + 官方消息落地
+3. 一致看多 + 近5日涨幅较大
+4. 新闻明显利好但指数冲高回落
+5. 发帖量创新高但价格不创新高
+5. 事件预期差分数
+利多 = +1
+利空 = -1
+中性 = 0
+
+预期不足 = +0.5
+中性 = 0
+预期充分 = -0.3
+极度过热 = -0.8
+
+超预期 = +0.8
+符合预期 = 0
+不及预期 = -0.8
+落地兑现 = -0.6
+
+事件分数：
+
+event_score = direction_score * impact_strength * expectation_adjustment * stage_adjustment
+九、模型设计
+1. 标签
+future_ret_3d = close.shift(-3) / close - 1
+future_ret_5d = close.shift(-5) / close - 1
+future_ret_7d = close.shift(-7) / close - 1
+
+方向标签：
+
+上涨：future_return > 0.008
+下跌：future_return < -0.008
+震荡：-0.008 <= future_return <= 0.008
+
+后续可以改成动态阈值：
+
+threshold = 0.4 * volatility_20d * sqrt(horizon)
+2. 模型
+
+每个周期单独训练：
+
+LightGBMClassifier_3d
+LightGBMRegressor_3d
+LightGBMClassifier_5d
+LightGBMRegressor_5d
+LightGBMClassifier_7d
+LightGBMRegressor_7d
+
+分类模型输出方向。
+
+回归模型输出涨跌幅。
+
+3. 融合逻辑
+
+最终预测由四部分组成：
+
+技术面预测
+资金/风格预测
+舆情热度预测
+事件/相似历史预测
+
+初始权重：
+
+技术面：35%
+资金风格：20%
+舆情热度：20%
+事件相似：25%
+
+后续根据回测结果动态调整。
+
+十、大模型使用范围
+Python直接做
+行情采集
+ETF采集
+期货采集
+股吧采集
+新闻采集
+技术指标计算
+热度统计
+情绪Z-score
+标签构造
+LightGBM训练
+回测
+日报生成
+大模型负责
+新闻事件分类
+预期阶段判断
+预期差判断
+股吧主题归纳
+是否存在小作文/传闻
+是否存在利好兑现风险
+生成业务化解释
+十一、大模型Prompt模板
+1. 新闻事件抽取
+你是金融市场事件分析助手。请从以下新闻中抽取结构化事件。
+
+要求：
+1. 不要输出投资建议。
+2. 只输出JSON。
+3. 判断事件类型、事件阶段、预期程度、影响方向和影响强度。
+4. 如果消息已经被市场提前交易，请标记“预期充分”或“利好兑现风险”。
+
+输入新闻：
+{news_text}
+
+输出JSON：
+{
+  "event_name": "",
+  "event_type": "政策/外交/流动性/监管/产业/宏观/其他",
+  "event_stage": "传闻/发酵/确认/落地/兑现",
+  "expectation_level": "预期不足/中性/预期充分/极度过热",
+  "surprise_level": "尚未落地/不及预期/符合预期/超预期",
+  "affected_style": "小盘/大盘/成长/周期/全市场",
+  "impact_direction": "利多/利空/中性",
+  "impact_strength": 1,
+  "reason": ""
+}
+2. 股吧主题归纳
+你是A股市场舆情分析助手。下面是若干股吧帖子标题和评论摘要。
+
+请判断：
+1. 股民主要在讨论什么主题；
+2. 情绪是否一致看多或一致看空；
+3. 是否有过热迹象；
+4. 是否存在利好兑现风险；
+5. 是否属于传闻、小作文、官方消息还是观点讨论。
+
+只输出JSON。
+
+输入：
+{posts}
+
+输出：
+{
+  "main_topics": [],
+  "sentiment_direction": "看多/看空/分歧/中性",
+  "sentiment_strength": 1,
+  "disagreement": 1,
+  "rumor_level": "无/轻微/明显",
+  "overheat_risk": "低/中/高",
+  "cash_out_risk": "低/中/高",
+  "reason": ""
+}
+十二、回测设计
+1. 回测方式
+
+不能随机切分。
+
+采用时间序列回测：
+
+训练集：2015-01-01 至 2020-12-31
+验证集：2021-01-01 至 2022-12-31
+测试集：2023-01-01 至 当前
+
+也支持滚动训练：
+
+每月重新训练一次
+每个交易日预测未来3/5/7日
+2. 回测指标
+方向准确率
+多空准确率
+MAE
+RMSE
+IC
+Rank IC
+高置信度样本准确率
+事件日准确率
+顶部识别准确率
+回撤识别能力
+十三、第一版开发重点
+
+第一版不要做太复杂，优先完成：
+
+1. MySQL建库建表
+2. AKShare指数行情采集
+3. 技术指标计算
+4. 3/5/7日标签构造
+5. LightGBM基础模型
+6. 东方财富股吧热度采集
+7. 舆情热度因子
+8. 新闻采集
+9. 大模型事件抽取
+10. 每日预测日报
+
+暂不做：
+
+微博
+微信公众号
+抖音/B站
+百度指数
+分钟级高频数据
+复杂交易策略
+自动下单
+十四、Codex开发要求
+
+开发时请遵守：
+
+1. 每个模块独立脚本，便于单独调试。
+2. 所有数据库连接写在config/db.yaml。
+3. 所有指数、ETF、期货代码写在config/symbols.yaml。
+4. 所有SQL建表语句写在sql/create_tables.sql。
+5. 所有日志写入logs目录。
+6. 采集脚本必须支持重复运行，避免重复入库。
+7. 每个数据表必须有唯一键。
+8. 所有采集失败要记录日志，不要中断整个流程。
+9. 大模型输出必须做JSON校验。
+10. 所有模型训练结果保存到models目录。
+11. 每日预测结果写入prediction_result表。
+12. 每日报告输出到data/reports目录。
+十五、最终验收标准
+
+第一版完成后，应能做到：
+
+1. 一键初始化数据库。
+2. 一键采集历史行情。
+3. 一键计算技术指标。
+4. 一键训练3/5/7日预测模型。
+5. 一键运行回测。
+6. 一键采集股吧热度。
+7. 一键采集新闻。
+8. 一键调用大模型抽取事件。
+9. 一键生成每日预测结果。
+10. 一键生成Excel/HTML日报。
+
+第一版成功标准：
+
+1. 技术面模型可以稳定输出预测。
+2. 股吧热度可以形成连续时间序列。
+3. 新闻事件可以结构化入库。
+4. 回测结果可以比较“只用技术指标”和“加入舆情事件”后的效果差异。
+5. 每日预测报告能解释为什么看涨、看跌或震荡。

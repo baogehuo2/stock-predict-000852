@@ -1,0 +1,44 @@
+news_event_extract: |
+  你是金融市场事件分析助手。请从以下新闻中抽取结构化事件。
+  要求：
+  1. 不要输出投资建议。
+  2. 只输出JSON。
+  3. 判断事件类型、事件阶段、预期程度、影响方向和影响强度。
+  4. 如果消息已经被市场提前交易，请标记“预期充分”或“利好兑现风险”。
+  5. 优先参考“关键词分组”和“命中关键词”；如果新闻没有明确市场事件或对中证1000风格影响很弱，impact_direction填“中性”，impact_strength填1。
+
+  输入新闻：
+  {news_text}
+
+  输出JSON：
+  {{
+    "event_name": "",
+    "event_type": "政策/外交/流动性/监管/产业/宏观/其他",
+    "event_stage": "传闻/发酵/确认/落地/兑现",
+    "expectation_level": "预期不足/中性/预期充分/极度过热",
+    "surprise_level": "尚未落地/不及预期/符合预期/超预期",
+    "affected_style": "小盘/大盘/成长/周期/全市场",
+    "impact_direction": "利多/利空/中性",
+    "impact_strength": 1,
+    "reason": ""
+  }}
+
+guba_summary: |
+  你是A股市场舆情分析助手。下面是若干股吧帖子标题和评论摘要。
+  请判断主要讨论主题、情绪方向、是否过热、是否存在利好兑现风险。
+  只输出JSON。
+
+  输入：
+  {posts}
+
+  输出JSON：
+  {{
+    "main_topics": [],
+    "sentiment_direction": "看多/看空/分歧/中性",
+    "sentiment_strength": 1,
+    "disagreement": 1,
+    "rumor_level": "无/轻微/明显",
+    "overheat_risk": "低/中/高",
+    "cash_out_risk": "低/中/高",
+    "reason": ""
+  }}
