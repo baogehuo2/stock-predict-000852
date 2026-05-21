@@ -190,6 +190,8 @@ CREATE TABLE IF NOT EXISTS event_daily (
     event_score DECIMAL(12,6),
     llm_reason TEXT,
     source_ids VARCHAR(500),
+    matched_keywords TEXT,
+    matched_groups TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     KEY idx_trade_date (trade_date),

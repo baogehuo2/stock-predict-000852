@@ -13,7 +13,7 @@ if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.common.config import get_config
-from src.common.db import read_sql, upsert_dataframe
+from src.common.db import execute_sql, read_sql, upsert_dataframe
 from src.common.logger import get_logger
 from src.common.utils import extract_json
 from src.llm.llm_client import LLMError, OpenAICompatibleClient
@@ -107,7 +107,16 @@ def _select_news_candidates(
 def _flush_events(rows: list[dict]) -> int:
     if not rows:
         return 0
+    _ensure_event_daily_columns()
     return upsert_dataframe(pd.DataFrame(rows), "event_daily", ["trade_date", "event_name"])
+
+
+def _ensure_event_daily_columns() -> None:
+    columns = set(read_sql("SHOW COLUMNS FROM event_daily")["Field"].tolist())
+    if "matched_keywords" not in columns:
+        execute_sql("ALTER TABLE event_daily ADD COLUMN matched_keywords TEXT NULL AFTER source_ids")
+    if "matched_groups" not in columns:
+        execute_sql("ALTER TABLE event_daily ADD COLUMN matched_groups TEXT NULL AFTER matched_keywords")
 
 
 def _is_transient_llm_error(exc: Exception) -> bool:
@@ -191,6 +200,8 @@ def _extract_events(
                     "event_score": score_event(event),
                     "llm_reason": event.get("reason") or json.dumps(event, ensure_ascii=False),
                     "source_ids": item_data["news_id"],
+                    "matched_keywords": json.dumps(matched_keywords, ensure_ascii=False),
+                    "matched_groups": json.dumps(matched_groups, ensure_ascii=False),
                 }
             )
         except Exception as exc:
@@ -220,6 +231,8 @@ def _extract_events(
                     "event_score": 0.0,
                     "llm_reason": event["reason"],
                     "source_ids": item_data["news_id"],
+                    "matched_keywords": json.dumps(matched_keywords, ensure_ascii=False),
+                    "matched_groups": json.dumps(matched_groups, ensure_ascii=False),
                 }
             )
         if batch_size > 0 and len(rows) >= batch_size:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import json
 import random
 import re
 import sys
@@ -119,6 +120,15 @@ def _decode_data_url_image(data_url: str):
     return cv2.imdecode(arr, cv2.IMREAD_GRAYSCALE)
 
 
+def _data_url_to_bytes(data_url: str | None) -> bytes | None:
+    if not data_url or "," not in data_url:
+        return None
+    try:
+        return base64.b64decode(data_url.split(",", 1)[1])
+    except Exception:
+        return None
+
+
 def _element_screenshot(page, selector: str) -> bytes | None:
     try:
         locator = page.locator(selector)
@@ -142,6 +152,123 @@ def _attempt_distance_offset(distance_offset: float | None, attempt: int) -> flo
     if distance_offset is None:
         return float(attempt_offsets[(attempt - 1) % len(attempt_offsets)])
     return float(distance_offset)
+
+
+def _safe_debug_name(value: str) -> str:
+    value = re.sub(r"[^\w.-]+", "_", value, flags=re.UNICODE).strip("_")
+    return value[:90] or "captcha"
+
+
+def _write_debug_bytes(debug_dir: Path | None, prefix: str, suffix: str, raw: bytes | None) -> str | None:
+    if debug_dir is None or not raw:
+        return None
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    path = debug_dir / f"{prefix}_{suffix}.png"
+    path.write_bytes(raw)
+    return str(path)
+
+
+def _write_debug_cv_image(debug_dir: Path | None, prefix: str, suffix: str, image) -> str | None:
+    if debug_dir is None or image is None:
+        return None
+    try:
+        import cv2
+    except Exception:
+        return None
+    ok, encoded = cv2.imencode(".png", image)
+    if not ok:
+        return None
+    return _write_debug_bytes(debug_dir, prefix, suffix, encoded.tobytes())
+
+
+def _draw_debug_target(debug_dir: Path | None, prefix: str, suffix: str, image, x: float | int | None, box: tuple[int, int, int, int] | None = None) -> None:
+    if debug_dir is None or image is None or x is None:
+        return
+    try:
+        import cv2
+        import numpy as np
+    except Exception:
+        return
+    if len(image.shape) == 2:
+        marked = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+    else:
+        marked = image.copy()
+    height = marked.shape[0]
+    x_int = int(round(float(x)))
+    cv2.line(marked, (x_int, 0), (x_int, height - 1), (0, 0, 255), 2)
+    if box:
+        bx, by, bw, bh = box
+        cv2.rectangle(marked, (bx, by), (bx + bw, by + bh), (0, 255, 0), 2)
+    _write_debug_cv_image(debug_dir, prefix, suffix, marked)
+
+
+def _write_debug_json(debug_dir: Path | None, prefix: str, data: dict) -> None:
+    if debug_dir is None:
+        return
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    path = debug_dir / f"{prefix}_meta.json"
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+
+
+def _captcha_debug_prefix(label: str, attempt: int, solver: str) -> str:
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+    return f"{stamp}_{_safe_debug_name(label)}_attempt{attempt}_{solver}"
+
+
+def _normalize_captcha_distance(
+    raw_distance: float,
+    distance_scale: float,
+    distance_offset: float | None,
+    attempt: int,
+    label: str,
+    solver: str,
+    debug_dir: Path | None = None,
+    debug_prefix: str | None = None,
+    extra: dict | None = None,
+) -> float | None:
+    offset = _attempt_distance_offset(distance_offset, attempt)
+    distance = raw_distance * distance_scale + offset
+    meta = {
+        "label": label,
+        "solver": solver,
+        "attempt": attempt,
+        "raw_distance": raw_distance,
+        "distance_scale": distance_scale,
+        "distance_offset": offset,
+        "distance": distance,
+        **(extra or {}),
+    }
+    if raw_distance <= 8:
+        meta["accepted"] = False
+        meta["reject_reason"] = "too_small"
+        if debug_prefix:
+            _write_debug_json(debug_dir, debug_prefix, meta)
+        logger.warning(
+            "captcha distance rejected label=%s solver=%s raw_distance=%.1f reason=too_small",
+            label,
+            solver,
+            raw_distance,
+        )
+        return None
+    if distance < 35 or distance > 260:
+        meta["accepted"] = False
+        meta["reject_reason"] = "out_of_range"
+        if debug_prefix:
+            _write_debug_json(debug_dir, debug_prefix, meta)
+        logger.warning(
+            "captcha distance rejected label=%s solver=%s raw_distance=%.1f distance=%.1f scale=%.3f offset=%s reason=out_of_range",
+            label,
+            solver,
+            raw_distance,
+            distance,
+            distance_scale,
+            offset,
+        )
+        return None
+    meta["accepted"] = True
+    if debug_prefix:
+        _write_debug_json(debug_dir, debug_prefix, meta)
+    return float(distance)
 
 
 def _eastmoney_piece_pair(page, label: str) -> tuple[bytes | None, bytes | None]:
@@ -179,39 +306,290 @@ def _eastmoney_piece_pair(page, label: str) -> tuple[bytes | None, bytes | None]
     return bg_raw, piece_raw
 
 
+def _download_eastmoney_captcha_assets(page) -> dict:
+    try:
+        return page.evaluate(
+            """async () => {
+                function imageUrl(node) {
+                    if (!node) return null;
+                    const style = getComputedStyle(node);
+                    const candidates = [
+                        style.backgroundImage,
+                        node.style.backgroundImage,
+                        node.getAttribute('src'),
+                        node.getAttribute('data-src')
+                    ];
+                    for (const value of candidates) {
+                        if (!value) continue;
+                        const match = String(value).match(/url\\(["']?(.*?)["']?\\)/);
+                        return match ? match[1] : String(value);
+                    }
+                    return null;
+                }
+                function bgUrl(selectors) {
+                    for (const selector of selectors) {
+                        const url = imageUrl(document.querySelector(selector));
+                        if (url) return url;
+                    }
+                    return null;
+                }
+                function parsePosition(value) {
+                    const parts = String(value || '0px 0px').split(/\\s+/);
+                    const x = Number.parseFloat(parts[0] || '0') || 0;
+                    const y = Number.parseFloat(parts[1] || '0') || 0;
+                    return [x, y];
+                }
+                async function imageFromUrl(url) {
+                    if (!url) return null;
+                    const response = await fetch(url, { credentials: 'include' });
+                    const blob = await response.blob();
+                    const objectUrl = URL.createObjectURL(blob);
+                    try {
+                        const image = await new Promise((resolve, reject) => {
+                            const img = new Image();
+                            img.onload = () => resolve(img);
+                            img.onerror = reject;
+                            img.src = objectUrl;
+                        });
+                        return image;
+                    } finally {
+                        URL.revokeObjectURL(objectUrl);
+                    }
+                }
+                async function dataUrl(url) {
+                    if (!url) return null;
+                    const response = await fetch(url, { credentials: 'include' });
+                    const blob = await response.blob();
+                    return await new Promise(resolve => {
+                        const reader = new FileReader();
+                        reader.onloadend = () => resolve(reader.result);
+                        reader.readAsDataURL(blob);
+                    });
+                }
+                async function composeSlices(containerSelector, sliceSelector) {
+                    const container = document.querySelector(containerSelector);
+                    if (!container) return null;
+                    const host = container.closest('.em_fullbg, .em_bg') || container;
+                    const oldClassName = host.className;
+                    const oldStyle = {
+                        display: host.style.display,
+                        visibility: host.style.visibility,
+                        position: host.style.position,
+                        left: host.style.left,
+                        top: host.style.top,
+                        opacity: host.style.opacity
+                    };
+                    const firstRect = container.getBoundingClientRect();
+                    if (!firstRect.width || !firstRect.height) {
+                        host.classList.remove('em_hide');
+                        host.classList.add('em_show');
+                        host.style.display = 'block';
+                        host.style.visibility = 'hidden';
+                        host.style.position = 'absolute';
+                        host.style.left = '-10000px';
+                        host.style.top = '0px';
+                        host.style.opacity = '1';
+                    }
+                    const containerRect = container.getBoundingClientRect();
+                    const width = Math.round(containerRect.width);
+                    const height = Math.round(containerRect.height);
+                    if (!width || !height) {
+                        host.className = oldClassName;
+                        Object.assign(host.style, oldStyle);
+                        return null;
+                    }
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    const imageCache = {};
+                    const slices = Array.from(container.querySelectorAll(sliceSelector));
+                    const sliceMeta = [];
+                    for (const slice of slices) {
+                        const style = getComputedStyle(slice);
+                        const url = imageUrl(slice);
+                        if (!url) continue;
+                        if (!imageCache[url]) imageCache[url] = await imageFromUrl(url);
+                        const img = imageCache[url];
+                        if (!img) continue;
+                        const rect = slice.getBoundingClientRect();
+                        const [posX, posY] = parsePosition(style.backgroundPosition);
+                        const sx = Math.max(0, -posX);
+                        const sy = Math.max(0, -posY);
+                        const sw = Math.round(rect.width);
+                        const sh = Math.round(rect.height);
+                        const dx = Math.round(rect.left - containerRect.left);
+                        const dy = Math.round(rect.top - containerRect.top);
+                        ctx.drawImage(img, sx, sy, sw, sh, dx, dy, sw, sh);
+                        sliceMeta.push({
+                            dx,
+                            dy,
+                            sw,
+                            sh,
+                            sx,
+                            sy,
+                            backgroundPosition: style.backgroundPosition,
+                            url
+                        });
+                    }
+                    const output = canvas.toDataURL('image/png');
+                    host.className = oldClassName;
+                    Object.assign(host.style, oldStyle);
+                    return { dataUrl: output, width, height, sliceMeta };
+                }
+                const bgUrlValue = bgUrl(['.em_cut_bg_slice', '.em_bg', '.em_bg.em_show']);
+                const fullUrlValue = bgUrl(['.em_cut_fullbg_slice', '.em_fullbg', '.em_fullbg.em_show']);
+                const pieceUrlValue = bgUrl(['.em_slice.em_show', '.em_slice']);
+                const bgBox = document.querySelector('.em_bg')?.getBoundingClientRect();
+                const pieceBox = document.querySelector('.em_slice.em_show, .em_slice')?.getBoundingClientRect();
+                const composedBg = await composeSlices('.em_cut_bg', '.em_cut_bg_slice');
+                const composedFull = await composeSlices('.em_cut_fullbg', '.em_cut_fullbg_slice');
+                return {
+                    bg: composedBg ? composedBg.dataUrl : await dataUrl(bgUrlValue),
+                    full: composedFull ? composedFull.dataUrl : await dataUrl(fullUrlValue),
+                    piece: await dataUrl(pieceUrlValue),
+                    bgUrlValue,
+                    fullUrlValue,
+                    pieceUrlValue,
+                    composed: {
+                        bg: !!composedBg,
+                        full: !!composedFull
+                    },
+                    composedBgMeta: composedBg ? { width: composedBg.width, height: composedBg.height, sliceMeta: composedBg.sliceMeta } : null,
+                    composedFullMeta: composedFull ? { width: composedFull.width, height: composedFull.height, sliceMeta: composedFull.sliceMeta } : null,
+                    displayWidth: bgBox ? bgBox.width : null,
+                    bgBox: bgBox ? {
+                        left: bgBox.left,
+                        top: bgBox.top,
+                        width: bgBox.width,
+                        height: bgBox.height
+                    } : null,
+                    pieceBox: pieceBox ? {
+                        left: pieceBox.left,
+                        top: pieceBox.top,
+                        width: pieceBox.width,
+                        height: pieceBox.height
+                    } : null
+                };
+            }"""
+        )
+    except Exception as exc:
+        logger.warning("failed to download Eastmoney captcha assets error=%s", exc)
+        return {}
+
+
+def _capture_active_slider_state(
+    page,
+    handle,
+    label: str,
+    attempt: int,
+    solver: str,
+    debug_dir: Path | None,
+) -> dict:
+    prefix = _captcha_debug_prefix(label, attempt, f"active_{solver}")
+    result = {"prefix": prefix, "bg_raw": None, "full_raw": None, "piece_raw": None, "display_width": None}
+    handle_box = handle.bounding_box()
+    if not handle_box:
+        return result
+
+    start_x = handle_box["x"] + handle_box["width"] / 2
+    start_y = handle_box["y"] + handle_box["height"] / 2
+    active_move = random.uniform(10.0, 18.0)
+    try:
+        page.mouse.move(start_x, start_y)
+        page.mouse.down()
+        page.mouse.move(start_x + active_move, start_y + random.uniform(-1.0, 1.0), steps=8)
+        page.wait_for_timeout(1000)
+
+        assets = _download_eastmoney_captcha_assets(page)
+        bg_raw = _data_url_to_bytes(assets.get("bg"))
+        full_raw = _data_url_to_bytes(assets.get("full"))
+        piece_raw = _data_url_to_bytes(assets.get("piece"))
+        display_width = assets.get("displayWidth")
+
+        if not piece_raw:
+            piece_raw = _element_screenshot(page, ".em_slice.em_show, .em_slice")
+        if not full_raw:
+            full_raw = _element_screenshot(page, ".em_fullbg.em_show, .em_fullbg")
+        try:
+            page.screenshot(path=str(debug_dir / f"{prefix}_active_page.png"), full_page=True) if debug_dir else None
+        except Exception as exc:
+            logger.warning("failed to save active captcha screenshot label=%s error=%s", label, exc)
+
+        try:
+            page.evaluate(
+                """() => {
+                    document.querySelectorAll('.em_slice').forEach(node => {
+                        node.dataset.codexOldVisibility = node.style.visibility || '';
+                        node.style.visibility = 'hidden';
+                    });
+                }"""
+            )
+            if not bg_raw:
+                bg_raw = _element_screenshot(page, ".em_bg.em_show, .em_bg")
+        finally:
+            try:
+                page.evaluate(
+                    """() => {
+                        document.querySelectorAll('.em_slice').forEach(node => {
+                            node.style.visibility = node.dataset.codexOldVisibility || '';
+                            delete node.dataset.codexOldVisibility;
+                        });
+                    }"""
+                )
+            except Exception:
+                pass
+
+        _write_debug_bytes(debug_dir, prefix, "composed_bg", bg_raw)
+        _write_debug_bytes(debug_dir, prefix, "composed_full", full_raw)
+        _write_debug_bytes(debug_dir, prefix, "download_piece", piece_raw)
+        _write_debug_json(
+            debug_dir,
+            prefix,
+            {
+                "label": label,
+                "attempt": attempt,
+                "solver": solver,
+                "active_move": active_move,
+                "handle_box": handle_box,
+                "asset_urls": {
+                    "bg": assets.get("bgUrlValue"),
+                    "full": assets.get("fullUrlValue"),
+                    "piece": assets.get("pieceUrlValue"),
+                },
+                "composed": assets.get("composed"),
+                "composed_bg_meta": assets.get("composedBgMeta"),
+                "composed_full_meta": assets.get("composedFullMeta"),
+                "display_width": display_width,
+                "bg_box": assets.get("bgBox"),
+                "piece_box": assets.get("pieceBox"),
+                "captured": {
+                    "bg": bool(bg_raw),
+                    "full": bool(full_raw),
+                    "piece": bool(piece_raw),
+                },
+            },
+        )
+        result.update(
+            {
+                "bg_raw": bg_raw,
+                "full_raw": full_raw,
+                "piece_raw": piece_raw,
+                "display_width": display_width,
+                "bg_box": assets.get("bgBox"),
+                "piece_box": assets.get("pieceBox"),
+            }
+        )
+        return result
+    finally:
+        try:
+            page.mouse.up()
+        except Exception:
+            pass
+        page.wait_for_timeout(800)
+
 def _eastmoney_image_pair(page) -> tuple[object | None, object | None, float | None]:
-    data = page.evaluate(
-        """async () => {
-            function bgUrl(selector) {
-                const node = document.querySelector(selector);
-                if (!node) return null;
-                const style = getComputedStyle(node);
-                const value = style.backgroundImage || node.style.backgroundImage || '';
-                const match = value.match(/url\\(["']?(.*?)["']?\\)/);
-                return match ? match[1] : null;
-            }
-            async function dataUrl(url) {
-                if (!url) return null;
-                const response = await fetch(url, { credentials: 'include' });
-                const blob = await response.blob();
-                return await new Promise(resolve => {
-                    const reader = new FileReader();
-                    reader.onloadend = () => resolve(reader.result);
-                    reader.readAsDataURL(blob);
-                });
-            }
-            const bgUrlValue = bgUrl('.em_cut_bg_slice') || bgUrl('.em_bg');
-            const fullUrlValue = bgUrl('.em_cut_fullbg_slice') || bgUrl('.em_fullbg');
-            const box = document.querySelector('.em_bg')?.getBoundingClientRect();
-            return {
-                bg: await dataUrl(bgUrlValue),
-                full: await dataUrl(fullUrlValue),
-                displayWidth: box ? box.width : null,
-                bgUrlValue,
-                fullUrlValue,
-            };
-        }"""
-    )
+    data = _download_eastmoney_captcha_assets(page)
     bg_url = data.get("bgUrlValue")
     full_url = data.get("fullUrlValue")
     if not data.get("bg") or not data.get("full"):
@@ -367,7 +745,72 @@ def _drag_handle(page, handle, distance: float, label: str) -> bool:
     return True
 
 
-def _eastmoney_gap_distance(page, label: str) -> float | None:
+def _save_captcha_debug_summary(
+    page,
+    label: str,
+    attempt: int,
+    captcha_solver: str,
+    debug_dir: Path | None,
+) -> None:
+    if debug_dir is None:
+        return
+    prefix = _captcha_debug_prefix(label, attempt, f"summary_{captcha_solver}")
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        page.screenshot(path=str(debug_dir / f"{prefix}_page.png"), full_page=True)
+    except Exception as exc:
+        logger.warning("failed to save captcha debug page screenshot label=%s error=%s", label, exc)
+    try:
+        data = page.evaluate(
+            """() => {
+                const selectors = ['.em_box', '.em_widget', '.em_bg', '.em_fullbg', '.em_slice', '.em_slider_knob'];
+                const result = {};
+                for (const selector of selectors) {
+                    const node = document.querySelector(selector);
+                    if (!node) {
+                        result[selector] = null;
+                        continue;
+                    }
+                    const rect = node.getBoundingClientRect();
+                    const style = getComputedStyle(node);
+                    result[selector] = {
+                        left: rect.left,
+                        top: rect.top,
+                        width: rect.width,
+                        height: rect.height,
+                        display: style.display,
+                        visibility: style.visibility,
+                        opacity: style.opacity,
+                        backgroundImage: style.backgroundImage,
+                        styleLeft: node.style.left || null
+                    };
+                }
+                return result;
+            }"""
+        )
+    except Exception as exc:
+        data = {"error": str(exc)}
+    _write_debug_json(
+        debug_dir,
+        prefix,
+        {
+            "label": label,
+            "attempt": attempt,
+            "captcha_solver": captcha_solver,
+            "dom": data,
+        },
+    )
+
+
+def _eastmoney_gap_distance(
+    page,
+    label: str,
+    distance_scale: float,
+    distance_offset: float | None,
+    attempt: int,
+    debug_dir: Path | None,
+    active_capture: dict | None = None,
+) -> float | None:
     try:
         import cv2
         import numpy as np
@@ -375,7 +818,16 @@ def _eastmoney_gap_distance(page, label: str) -> float | None:
         logger.warning("opencv is unavailable; cannot solve Eastmoney captcha label=%s error=%s", label, exc)
         return None
 
-    bg, full, display_width = _eastmoney_image_pair(page)
+    debug_prefix = _captcha_debug_prefix(label, attempt, "cv")
+    bg_raw = active_capture.get("bg_raw") if active_capture else None
+    full_raw = active_capture.get("full_raw") if active_capture else None
+    display_width = active_capture.get("display_width") if active_capture else None
+    bg_box = active_capture.get("bg_box") if active_capture else None
+    piece_box = active_capture.get("piece_box") if active_capture else None
+    bg = _decode_png_bytes(bg_raw) if bg_raw else None
+    full = _decode_png_bytes(full_raw) if full_raw else None
+    if bg is None or full is None:
+        bg, full, display_width = _eastmoney_image_pair(page)
     if bg is None or full is None:
         try:
             page.evaluate(
@@ -410,6 +862,14 @@ def _eastmoney_gap_distance(page, label: str) -> float | None:
         display_width = None
         if bg is None or full is None:
             return None
+    if debug_dir is not None:
+        if bg_raw:
+            _write_debug_bytes(debug_dir, debug_prefix, "bg", bg_raw)
+        if full_raw:
+            _write_debug_bytes(debug_dir, debug_prefix, "full", full_raw)
+        _write_debug_cv_image(debug_dir, debug_prefix, "bg_cv", bg)
+        _write_debug_cv_image(debug_dir, debug_prefix, "full_cv", full)
+        page.screenshot(path=str(debug_dir / f"{debug_prefix}_page.png"), full_page=True)
     if bg.shape != full.shape:
         full = cv2.resize(full, (bg.shape[1], bg.shape[0]))
 
@@ -417,12 +877,21 @@ def _eastmoney_gap_distance(page, label: str) -> float | None:
     _, threshold = cv2.threshold(diff, 28, 255, cv2.THRESH_BINARY)
     kernel = np.ones((3, 3), np.uint8)
     threshold = cv2.morphologyEx(threshold, cv2.MORPH_CLOSE, kernel, iterations=2)
+    _write_debug_cv_image(debug_dir, debug_prefix, "diff", diff)
+    _write_debug_cv_image(debug_dir, debug_prefix, "threshold", threshold)
     contours, _ = cv2.findContours(threshold, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    expected_y = None
+    if bg_box and piece_box and bg_box.get("height"):
+        y_scale = bg.shape[0] / float(bg_box["height"])
+        expected_y = (float(piece_box["top"]) - float(bg_box["top"])) * y_scale
 
     candidates: list[tuple[float, int, int, int, int]] = []
     for contour in contours:
         x, y, w, h = cv2.boundingRect(contour)
         area = cv2.contourArea(contour)
+        if expected_y is not None and abs(y - expected_y) > 45:
+            continue
         if 15 <= w <= 90 and 15 <= h <= 90 and area >= 80:
             candidates.append((area, x, y, w, h))
     if not candidates:
@@ -430,16 +899,47 @@ def _eastmoney_gap_distance(page, label: str) -> float | None:
         return None
 
     _, x, y, w, h = max(candidates, key=lambda item: item[0])
+    _draw_debug_target(debug_dir, debug_prefix, "target_on_bg", bg, x, (x, y, w, h))
+    _draw_debug_target(debug_dir, debug_prefix, "target_on_diff", diff, x, (x, y, w, h))
+    _draw_debug_target(debug_dir, debug_prefix, "target_on_threshold", threshold, x, (x, y, w, h))
     scale = float(display_width) / bg.shape[1] if display_width else 1.0
-    distance = float(x) * scale
+    raw_distance = float(x) * scale
+    distance = _normalize_captcha_distance(
+        raw_distance,
+        distance_scale,
+        distance_offset,
+        attempt,
+        label,
+        "cv",
+        debug_dir,
+        debug_prefix,
+        {
+            "x": x,
+            "y": y,
+            "w": w,
+            "h": h,
+            "image_scale": scale,
+            "raw_distance": raw_distance,
+            "contour_count": len(contours),
+            "candidate_count": len(candidates),
+            "expected_y": expected_y,
+            "candidates": [
+                {"area": area, "x": cx, "y": cy, "w": cw, "h": ch}
+                for area, cx, cy, cw, ch in sorted(candidates, reverse=True)[:8]
+            ],
+        },
+    )
+    if distance is None:
+        return None
     logger.info(
-        "Eastmoney captcha gap label=%s x=%s y=%s w=%s h=%s scale=%.4f distance=%.1f",
+        "Eastmoney captcha gap label=%s x=%s y=%s w=%s h=%s scale=%.4f raw_distance=%.1f distance=%.1f",
         label,
         x,
         y,
         w,
         h,
         scale,
+        raw_distance,
         distance,
     )
     return distance
@@ -451,6 +951,7 @@ def _recognizer_gap_distance(
     distance_scale: float,
     distance_offset: float | None,
     attempt: int,
+    debug_dir: Path | None,
 ) -> float | None:
     try:
         from captcha_recognizer.slider import Slider
@@ -458,6 +959,7 @@ def _recognizer_gap_distance(
         logger.warning("captcha_recognizer is unavailable label=%s error=%s", label, exc)
         return None
 
+    debug_prefix = _captcha_debug_prefix(label, attempt, "recognizer")
     raw = _element_screenshot(page, ".em_box")
     box = None
     if raw:
@@ -469,6 +971,7 @@ def _recognizer_gap_distance(
     if not raw:
         logger.warning("captcha_recognizer screenshot missing label=%s", label)
         return None
+    _write_debug_bytes(debug_dir, debug_prefix, "widget", raw)
 
     try:
         import cv2
@@ -491,8 +994,20 @@ def _recognizer_gap_distance(
             return None
         scale = float(box["width"]) / image_width if box and image_width else 1.0
         raw_distance = float(x1) * scale
+        distance = _normalize_captcha_distance(
+            raw_distance,
+            distance_scale,
+            distance_offset,
+            attempt,
+            label,
+            "recognizer",
+            debug_dir,
+            debug_prefix,
+            {"x": x1, "image_width": image_width, "image_scale": scale, "raw_result": str(result)},
+        )
+        if distance is None:
+            return None
         offset = _attempt_distance_offset(distance_offset, attempt)
-        distance = max(20.0, raw_distance * distance_scale + offset)
         logger.info(
             "captcha_recognizer gap label=%s x=%s scale=%.4f raw_distance=%.1f distance_scale=%.3f distance_offset=%s attempt=%s distance=%.1f",
             label,
@@ -516,6 +1031,8 @@ def _puzzle_gap_distance(
     distance_scale: float,
     distance_offset: float | None,
     attempt: int,
+    debug_dir: Path | None,
+    active_capture: dict | None = None,
 ) -> float | None:
     try:
         from puzzle_slider_captcha import PuzzleCaptchaSolver
@@ -523,9 +1040,15 @@ def _puzzle_gap_distance(
         logger.warning("PuzzleCaptchaSolver is unavailable label=%s error=%s", label, exc)
         return None
 
-    bg_raw, piece_raw = _eastmoney_piece_pair(page, label)
+    debug_prefix = _captcha_debug_prefix(label, attempt, "puzzle")
+    bg_raw = active_capture.get("bg_raw") if active_capture else None
+    piece_raw = active_capture.get("piece_raw") if active_capture else None
+    if not bg_raw or not piece_raw:
+        bg_raw, piece_raw = _eastmoney_piece_pair(page, label)
     if not bg_raw or not piece_raw:
         return None
+    _write_debug_bytes(debug_dir, debug_prefix, "bg", bg_raw)
+    _write_debug_bytes(debug_dir, debug_prefix, "piece", piece_raw)
 
     try:
         solver = PuzzleCaptchaSolver()
@@ -544,9 +1067,21 @@ def _puzzle_gap_distance(
             logger.warning("PuzzleCaptchaSolver returned no x label=%s result=%s", label, result)
             return None
 
-        offset = _attempt_distance_offset(distance_offset, attempt)
         raw_distance = float(x)
-        distance = max(20.0, raw_distance * distance_scale + offset)
+        distance = _normalize_captcha_distance(
+            raw_distance,
+            distance_scale,
+            distance_offset,
+            attempt,
+            label,
+            "puzzle",
+            debug_dir,
+            debug_prefix,
+            {"x": x, "y": y, "confidence": confidence, "raw_result": str(result)},
+        )
+        if distance is None:
+            return None
+        offset = _attempt_distance_offset(distance_offset, attempt)
         logger.info(
             "PuzzleCaptchaSolver gap label=%s x=%s y=%s confidence=%s raw_distance=%.1f distance_scale=%.3f distance_offset=%s attempt=%s distance=%.1f",
             label,
@@ -572,24 +1107,35 @@ def _try_eastmoney_slider(
     distance_scale: float,
     distance_offset: float | None,
     attempt: int,
+    debug_dir: Path | None,
 ) -> bool:
     _, handle = _find_first_element(page, [".em_slider_knob", ".em_slider .em_slider_knob"])
     if not handle:
         return False
     logger.info("Eastmoney slider widget found label=%s", label)
-    _reveal_slider_piece(page, handle, label)
-    page.wait_for_timeout(1200)
-    if captcha_solver == "puzzle":
-        distance = _puzzle_gap_distance(page, label, distance_scale, distance_offset, attempt)
-    elif captcha_solver == "recognizer":
-        distance = _recognizer_gap_distance(page, label, distance_scale, distance_offset, attempt)
-    elif captcha_solver == "cv":
-        distance = _eastmoney_gap_distance(page, label)
-    else:
-        distance = None
-    if distance is None:
-        return False
-    return _drag_handle(page, handle, distance, label)
+    solver_order = [captcha_solver]
+    if captcha_solver == "auto":
+        solver_order = ["puzzle", "cv", "recognizer"]
+    elif captcha_solver == "none":
+        solver_order = []
+
+    for solver in solver_order:
+        active_capture = _capture_active_slider_state(page, handle, label, attempt, solver, debug_dir)
+        page.wait_for_timeout(700)
+        if solver == "puzzle":
+            distance = _puzzle_gap_distance(page, label, distance_scale, distance_offset, attempt, debug_dir, active_capture)
+        elif solver == "recognizer":
+            distance = _recognizer_gap_distance(page, label, distance_scale, distance_offset, attempt, debug_dir)
+        elif solver == "cv":
+            distance = _eastmoney_gap_distance(page, label, distance_scale, distance_offset, attempt, debug_dir, active_capture)
+        else:
+            distance = None
+        if distance is None:
+            logger.info("captcha solver did not produce usable distance label=%s solver=%s", label, solver)
+            continue
+        logger.info("captcha solver selected label=%s solver=%s distance=%.1f", label, solver, distance)
+        return _drag_handle(page, handle, distance, label)
+    return False
 
 
 def _try_auto_slider(
@@ -599,10 +1145,11 @@ def _try_auto_slider(
     distance_scale: float,
     distance_offset: float | None,
     attempt: int,
+    debug_dir: Path | None,
 ) -> bool:
-    if _try_eastmoney_slider(page, label, captcha_solver, distance_scale, distance_offset, attempt):
+    if _try_eastmoney_slider(page, label, captcha_solver, distance_scale, distance_offset, attempt, debug_dir):
         return True
-    if captcha_solver != "cv":
+    if captcha_solver not in {"cv", "auto"}:
         return False
 
     bg_selectors = [".bg_img", "canvas.bg_img", "canvas[class*='bg']", ".geetest_canvas_bg", ".tc-bg-img canvas"]
@@ -700,12 +1247,14 @@ def _resolve_risk_page(
     manual_fallback: bool,
     captcha_solver: str,
     captcha_distance_scale: float,
-    captcha_distance_offset: float,
+    captcha_distance_offset: float | None,
+    captcha_debug_dir: Path | None,
 ) -> str:
     for attempt in range(1, max_retries + 1):
         if not _is_risk_page(html):
             return html
         logger.warning("risk/captcha page detected label=%s attempt=%s/%s", label, attempt, max_retries)
+        _save_captcha_debug_summary(page, label, attempt, captcha_solver, captcha_debug_dir)
         solved_by_auto = auto_captcha and _try_auto_slider(
             page,
             label,
@@ -713,6 +1262,7 @@ def _resolve_risk_page(
             captcha_distance_scale,
             captcha_distance_offset,
             attempt,
+            captcha_debug_dir,
         )
         page.wait_for_timeout(2500)
         html = page.content()
@@ -723,8 +1273,9 @@ def _resolve_risk_page(
         if attempt >= max_retries:
             break
         if retry_wait > 0:
-            logger.info("wait %.1fs before next captcha retry label=%s", retry_wait, label)
-            time.sleep(retry_wait)
+            wait_seconds = retry_wait * min(3.0, 1.0 + (attempt - 1) * 0.35) + random.uniform(0.5, 2.5)
+            logger.info("wait %.1fs before next captcha retry label=%s", wait_seconds, label)
+            time.sleep(wait_seconds)
         page.reload(wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(1500)
         html = page.content()
@@ -751,6 +1302,7 @@ def _load_page_with_retry(
     captcha_solver: str,
     captcha_distance_scale: float,
     captcha_distance_offset: float | None,
+    captcha_debug_dir: Path | None,
     settle_ms: int = 1500,
     recover_url: str | None = None,
 ) -> str:
@@ -790,6 +1342,7 @@ def _load_page_with_retry(
                 captcha_solver,
                 captcha_distance_scale,
                 captcha_distance_offset,
+                captcha_debug_dir,
             )
         except Exception as exc:
             last_error = exc
@@ -947,9 +1500,10 @@ def collect_guba_history_playwright(
     retry_wait: float = 30.0,
     auto_captcha: bool = True,
     manual_captcha_fallback: bool = True,
-    captcha_solver: str = "puzzle",
+    captcha_solver: str = "auto",
     captcha_distance_scale: float = 1.0,
     captcha_distance_offset: float | None = None,
+    captcha_debug_dir: str | None = None,
 ) -> int:
     from playwright.sync_api import sync_playwright
 
@@ -962,6 +1516,9 @@ def collect_guba_history_playwright(
     comment_total = 0
     user_data_path = project_path(user_data_dir)
     user_data_path.mkdir(parents=True, exist_ok=True)
+    captcha_debug_path = project_path(captcha_debug_dir) if captcha_debug_dir else None
+    if captcha_debug_path:
+        captcha_debug_path.mkdir(parents=True, exist_ok=True)
 
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
@@ -994,6 +1551,7 @@ def collect_guba_history_playwright(
                             captcha_solver=captcha_solver,
                             captcha_distance_scale=captcha_distance_scale,
                             captcha_distance_offset=captcha_distance_offset,
+                            captcha_debug_dir=captcha_debug_path,
                             settle_ms=1500,
                             recover_url=bar["url"],
                         )
@@ -1030,6 +1588,7 @@ def collect_guba_history_playwright(
                                         captcha_solver=captcha_solver,
                                         captcha_distance_scale=captcha_distance_scale,
                                         captcha_distance_offset=captcha_distance_offset,
+                                        captcha_debug_dir=captcha_debug_path,
                                         settle_ms=800,
                                         recover_url=url,
                                     )
@@ -1104,9 +1663,9 @@ def main() -> None:
     parser.add_argument("--no-manual-captcha-fallback", action="store_true", help="Do not pause for manual captcha if auto handling fails.")
     parser.add_argument(
         "--captcha-solver",
-        choices=["puzzle", "recognizer", "cv", "none"],
-        default="puzzle",
-        help="Captcha solver to use. PuzzleCaptchaSolver is default; captcha_recognizer and legacy OpenCV are kept as opt-in backups.",
+        choices=["auto", "puzzle", "recognizer", "cv", "none"],
+        default="auto",
+        help="Captcha solver to use. Auto tries PuzzleCaptchaSolver, OpenCV, then captcha_recognizer.",
     )
     parser.add_argument("--captcha-distance-scale", type=float, default=1.0, help="Multiply captcha drag distance by this factor.")
     parser.add_argument(
@@ -1114,6 +1673,11 @@ def main() -> None:
         type=float,
         default=None,
         help="Add this many pixels to captcha drag distance. Default auto-tries several offsets.",
+    )
+    parser.add_argument(
+        "--captcha-debug-dir",
+        default=None,
+        help="Directory to save captcha screenshots and distance metadata for debugging.",
     )
     args = parser.parse_args()
     print(
@@ -1139,6 +1703,7 @@ def main() -> None:
             captcha_solver=args.captcha_solver,
             captcha_distance_scale=args.captcha_distance_scale,
             captcha_distance_offset=args.captcha_distance_offset,
+            captcha_debug_dir=args.captcha_debug_dir,
         )
     )
 

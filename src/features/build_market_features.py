@@ -65,10 +65,11 @@ def build_market_features() -> int:
 
     pivot_ret = features.pivot(index="trade_date", columns="index_code", values="ret_1d")
     target = get_config()["project"]["target_index"]
-    rel = pd.DataFrame({"trade_date": pivot_ret.index})
+    rel = pd.DataFrame(index=pivot_ret.index)
     rel["relative_hs300"] = pivot_ret.get(target) - pivot_ret.get("000300")
     rel["relative_zz500"] = pivot_ret.get(target) - pivot_ret.get("000905")
     rel["relative_cyb"] = pivot_ret.get(target) - pivot_ret.get("399006")
+    rel = rel.reset_index().rename(columns={"index": "trade_date"})
     features = features.merge(rel, on="trade_date", how="left")
 
     cols = [
@@ -107,4 +108,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
