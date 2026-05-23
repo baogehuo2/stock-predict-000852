@@ -15,6 +15,7 @@ from src.common.logger import get_logger
 logger = get_logger(__name__)
 
 EVENT_GROUPS = ["index_style", "liquidity", "policy_market", "growth_industry", "macro"]
+GUBA_SENTIMENT_FEATURES = ["heat_score", "heat_zscore_20d", "sentiment_score", "disagreement"]
 
 
 def _label(ret: float | None, vol: float | None, horizon: int) -> str | None:
@@ -100,6 +101,7 @@ def build_model_dataset() -> int:
     cfg = get_config()
     target = cfg["project"]["target_index"]
     horizons = cfg["model"]["horizons"]
+    use_guba_sentiment = bool(cfg.get("features", {}).get("use_guba_sentiment", False))
     market = read_sql(
         "SELECT f.*, i.close FROM market_feature_daily f "
         "JOIN market_index_daily i ON f.trade_date=i.trade_date AND f.index_code=i.index_code "
@@ -118,17 +120,20 @@ def build_model_dataset() -> int:
             for ret, vol in zip(market[f"future_ret_{h}d"], market["volatility_20d"])
         ]
 
-    sentiment = read_sql(
-        "SELECT trade_date, AVG(heat_score) heat_score, AVG(heat_zscore_20d) heat_zscore_20d, "
-        "AVG(sentiment_score) sentiment_score, AVG(disagreement) disagreement "
-        "FROM sentiment_feature_daily GROUP BY trade_date"
-    )
-    if not sentiment.empty:
-        sentiment["trade_date"] = pd.to_datetime(sentiment["trade_date"]).dt.date
-        market = market.merge(sentiment, on="trade_date", how="left", suffixes=("", "_sent"))
+    if use_guba_sentiment:
+        sentiment = read_sql(
+            "SELECT trade_date, AVG(heat_score) heat_score, AVG(heat_zscore_20d) heat_zscore_20d, "
+            "AVG(sentiment_score) sentiment_score, AVG(disagreement) disagreement "
+            "FROM sentiment_feature_daily GROUP BY trade_date"
+        )
+        if not sentiment.empty:
+            sentiment["trade_date"] = pd.to_datetime(sentiment["trade_date"]).dt.date
+            market = market.merge(sentiment, on="trade_date", how="left", suffixes=("", "_sent"))
+        else:
+            for col in GUBA_SENTIMENT_FEATURES:
+                market[col] = 0
     else:
-        for col in ["heat_score", "heat_zscore_20d", "sentiment_score", "disagreement"]:
-            market[col] = 0
+        logger.info("guba sentiment features disabled by config features.use_guba_sentiment=false")
 
     events = _event_features()
     if not events.empty:
@@ -162,10 +167,6 @@ def build_model_dataset() -> int:
         "relative_hs300",
         "relative_zz500",
         "relative_cyb",
-        "heat_score",
-        "heat_zscore_20d",
-        "sentiment_score",
-        "disagreement",
         "event_score",
         "event_count",
         "event_positive_count",
@@ -197,6 +198,8 @@ def build_model_dataset() -> int:
         "event_macro_negative_count",
         "event_macro_max_strength",
     ]
+    if use_guba_sentiment:
+        feature_cols.extend(GUBA_SENTIMENT_FEATURES)
     for col in feature_cols:
         if col not in market:
             market[col] = 0

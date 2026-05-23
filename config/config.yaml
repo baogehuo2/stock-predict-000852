@@ -43,6 +43,9 @@ sentiment:
     - 量化
     - ETF
 
+features:
+  use_guba_sentiment: false
+
 news:
   keyword_groups:
     index_style:

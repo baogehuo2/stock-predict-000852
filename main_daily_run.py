@@ -8,6 +8,7 @@ from src.collectors.collect_guba_eastmoney import collect_guba
 from src.collectors.collect_index_akshare import collect_indices
 from src.collectors.collect_news import collect_news
 from src.common.config import ensure_project_dirs
+from src.common.config import get_config
 from src.common.db import init_database
 from src.common.logger import get_logger
 from src.common.network import disable_env_proxies
@@ -57,7 +58,12 @@ DEFAULT_FLOW = [
 
 def run_steps(steps: list[str], continue_on_error: bool = True) -> None:
     ensure_project_dirs()
+    cfg = get_config()
+    use_guba_sentiment = bool(cfg.get("features", {}).get("use_guba_sentiment", False))
     for step in steps:
+        if step == "build_sentiment_features" and not use_guba_sentiment:
+            logger.info("skip step=%s because features.use_guba_sentiment=false", step)
+            continue
         logger.info("start step=%s", step)
         try:
             result = STEPS[step]()

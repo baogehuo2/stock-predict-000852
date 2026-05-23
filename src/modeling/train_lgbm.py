@@ -22,6 +22,13 @@ from lightgbm import LGBMClassifier, LGBMRegressor
 
 logger = get_logger(__name__)
 
+GUBA_SENTIMENT_FEATURES = {
+    "f_heat_score",
+    "f_heat_zscore_20d",
+    "f_sentiment_score",
+    "f_disagreement",
+}
+
 
 def _label_metrics(y_true: pd.Series, y_pred: pd.Series, labels: list[str]) -> dict:
     precision, recall, f1, support = precision_recall_fscore_support(
@@ -62,6 +69,12 @@ def train_models(
     if df.empty:
         raise RuntimeError("model_dataset_daily is empty. Build dataset first.")
     features = feature_columns(df)
+    if not cfg.get("features", {}).get("use_guba_sentiment", False):
+        before = len(features)
+        features = [col for col in features if col not in GUBA_SENTIMENT_FEATURES]
+        removed = before - len(features)
+        if removed:
+            logger.info("guba sentiment training features disabled removed=%s", removed)
     if not features:
         raise RuntimeError("No feature columns found in dataset.")
 
