@@ -14,6 +14,10 @@
 
 重要事项：
 - 当前建模研究主线分支是 feature/buy-signal-research。
+- 当前已保留分支：main、feature/buy-signal-research、feature/data-collectors。
+- 规划但暂不创建的分支：feature/llm-event-extraction、feature/backtest-engine。
+- 如果后续修改发现需要优化 LLM 事件抽取，再提示用户确认是否创建 feature/llm-event-extraction。
+- 如果后续修改发现 buy signal 输出格式已稳定且需要开发回测，再提示用户确认是否创建 feature/backtest-engine。
 - 先在 feature/buy-signal-research 稳定 buy signal 输出格式，再考虑回测分支。
 - buy signal 输出格式应优先稳定字段：trade_date、model_tag、horizon、buy_proba、threshold、signal、pred_ret、future_ret_5d、future_ret_7d。
 - 在 buy signal 输出格式稳定前，不要新建 feature/backtest-engine。
