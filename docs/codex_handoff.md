@@ -230,6 +230,10 @@ It reports:
 
 - `rule`
   - `baseline_all_rows`
+  - `always_up`
+  - `ma20_trend_up`
+  - `momentum_5d_positive`
+  - `ret_20d_positive`
   - `predicted_up_label`
   - `up_probability`
   - `predicted_up_label_year_YYYY`
