@@ -8,6 +8,7 @@ import joblib
 import pandas as pd
 
 from src.common.config import get_config, project_path
+from src.common.db import read_sql
 from src.common.lightgbm_compat import disable_broken_dask_autoload
 from src.modeling.data import load_dataset
 
@@ -44,6 +45,21 @@ def _safe_rate(mask: pd.Series) -> float | None:
     return float(mask.mean())
 
 
+def _attach_price_baseline_features(df: pd.DataFrame, target_index: str) -> pd.DataFrame:
+    market = read_sql(
+        "SELECT trade_date, close FROM market_index_daily "
+        "WHERE index_code=:target ORDER BY trade_date",
+        {"target": target_index},
+    )
+    if market.empty:
+        return df
+
+    market["trade_date"] = pd.to_datetime(market["trade_date"])
+    close = pd.to_numeric(market["close"], errors="coerce")
+    market["baseline_ret_20d"] = close.pct_change(20)
+    return df.merge(market[["trade_date", "baseline_ret_20d"]], on="trade_date", how="left")
+
+
 def _signal_metrics(
     part: pd.DataFrame,
     signal: pd.DataFrame,
@@ -74,6 +90,46 @@ def _signal_metrics(
     }
 
 
+def _append_rule_metrics(
+    rows: list[dict],
+    part: pd.DataFrame,
+    signal: pd.DataFrame,
+    ret_col: str,
+    label_col: str,
+    up_label: str,
+    horizon: int,
+    model_tag: str | None,
+    split_test_start: str,
+    rule: str,
+    threshold: float | None = None,
+) -> None:
+    metrics = _signal_metrics(part, signal, ret_col, label_col, up_label)
+    metrics.update(
+        {
+            "horizon": horizon,
+            "model_tag": model_tag or "default",
+            "test_start": split_test_start,
+            "up_label": up_label,
+            "rule": rule,
+            "threshold": threshold,
+        }
+    )
+    rows.append(metrics)
+
+
+def _simple_baseline_signals(part: pd.DataFrame) -> list[tuple[str, pd.DataFrame]]:
+    rules = [("always_up", part)]
+
+    if "f_ma20_gap" in part.columns:
+        rules.append(("ma20_trend_up", part[part["f_ma20_gap"] > 0]))
+    if "f_ret_5d" in part.columns:
+        rules.append(("momentum_5d_positive", part[part["f_ret_5d"] > 0]))
+    if "baseline_ret_20d" in part.columns:
+        rules.append(("ret_20d_positive", part[part["baseline_ret_20d"] > 0]))
+
+    return rules
+
+
 def evaluate_signal_quality(
     model_tag: str | None = None,
     test_start: str | None = None,
@@ -85,6 +141,7 @@ def evaluate_signal_quality(
     df = load_dataset()
     if df.empty:
         raise RuntimeError("model_dataset_daily is empty. Build dataset first.")
+    df = _attach_price_baseline_features(df, cfg["project"]["target_index"])
 
     split_test_start = test_start or cfg["model"]["splits"]["test_start"]
     test = df[df["trade_date"] >= split_test_start].copy()
@@ -138,6 +195,20 @@ def evaluate_signal_quality(
             }
         )
         rows.append(baseline)
+
+        for rule, signal in _simple_baseline_signals(part):
+            _append_rule_metrics(
+                rows,
+                part,
+                signal,
+                ret_col,
+                label_col,
+                up_label,
+                horizon,
+                model_tag,
+                split_test_start,
+                rule,
+            )
 
         predicted_up = part[part["pred_label"] == up_label]
         pred_up_metrics = _signal_metrics(part, predicted_up, ret_col, label_col, up_label)
