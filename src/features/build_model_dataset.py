@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from src.common.config import get_config
-from src.common.db import read_sql, upsert_dataframe
+from src.common.db import execute_sql, get_database_name, read_sql, upsert_dataframe
 from src.common.logger import get_logger
 
 
@@ -16,6 +16,7 @@ logger = get_logger(__name__)
 
 EVENT_GROUPS = ["index_style", "liquidity", "policy_market", "growth_industry", "macro"]
 GUBA_SENTIMENT_FEATURES = ["heat_score", "heat_zscore_20d", "sentiment_score", "disagreement"]
+EVENT_ROLLING_WINDOWS = [3, 5, 10]
 
 
 def _label(ret: float | None, vol: float | None, horizon: int) -> str | None:
@@ -30,6 +31,25 @@ def _label(ret: float | None, vol: float | None, horizon: int) -> str | None:
     if ret < -threshold:
         return "下跌"
     return "震荡"
+
+
+def _buy_label(ret: float | None, threshold: float) -> int | None:
+    if pd.isna(ret) or ret is None:
+        return None
+    return int(float(ret) > threshold)
+
+
+def _ensure_buy_label_columns(horizons: list[int]) -> None:
+    database = get_database_name()
+    for horizon in horizons:
+        col = f"buy_label_{int(horizon)}d"
+        exists = read_sql(
+            "SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=:database AND TABLE_NAME='model_dataset_daily' AND COLUMN_NAME=:column_name",
+            {"database": database, "column_name": col},
+        )
+        if int(exists.iloc[0]["cnt"]) == 0:
+            execute_sql(f"ALTER TABLE model_dataset_daily ADD COLUMN `{col}` TINYINT NULL AFTER `label_{int(horizon)}d`")
 
 
 def _json_list(value: object) -> list[str]:
@@ -97,10 +117,31 @@ def _event_features() -> pd.DataFrame:
     return pd.DataFrame(rows, columns=all_cols)
 
 
+def _add_rolling_event_features(market: pd.DataFrame, event_feature_cols: list[str]) -> tuple[pd.DataFrame, list[str]]:
+    market = market.sort_values("trade_date").copy()
+    rolling_cols = []
+    for window in EVENT_ROLLING_WINDOWS:
+        for col in event_feature_cols:
+            if col not in market:
+                market[col] = 0
+            out_col = f"{col}_roll_{window}d"
+            values = pd.to_numeric(market[col], errors="coerce").fillna(0)
+            if col.endswith("_max_strength") or col == "event_max_strength":
+                market[out_col] = values.rolling(window=window, min_periods=1).max()
+            else:
+                market[out_col] = values.rolling(window=window, min_periods=1).sum()
+            rolling_cols.append(out_col)
+    return market, rolling_cols
+
+
 def build_model_dataset() -> int:
     cfg = get_config()
     target = cfg["project"]["target_index"]
     horizons = cfg["model"]["horizons"]
+    buy_cfg = cfg.get("binary_buy_model", {})
+    buy_horizons = [int(h) for h in buy_cfg.get("horizons", [5, 7])]
+    buy_thresholds = {str(k): float(v) for k, v in buy_cfg.get("label_thresholds", {}).items()}
+    _ensure_buy_label_columns(buy_horizons)
     use_guba_sentiment = bool(cfg.get("features", {}).get("use_guba_sentiment", False))
     market = read_sql(
         "SELECT f.*, i.close FROM market_feature_daily f "
@@ -119,6 +160,12 @@ def build_model_dataset() -> int:
             _label(ret, vol, h)
             for ret, vol in zip(market[f"future_ret_{h}d"], market["volatility_20d"])
         ]
+    for h in buy_horizons:
+        ret_col = f"future_ret_{h}d"
+        if ret_col not in market:
+            market[ret_col] = close.shift(-h) / close - 1
+        threshold = buy_thresholds.get(str(h), 0.0)
+        market[f"buy_label_{h}d"] = market[ret_col].map(lambda ret, t=threshold: _buy_label(ret, t))
 
     if use_guba_sentiment:
         sentiment = read_sql(
@@ -145,6 +192,7 @@ def build_model_dataset() -> int:
         if col not in market:
             market[col] = 0
         market[col] = market[col].fillna(0)
+    market, rolling_event_feature_cols = _add_rolling_event_features(market, event_feature_cols)
 
     feature_cols = [
         "ret_1d",
@@ -198,6 +246,7 @@ def build_model_dataset() -> int:
         "event_macro_negative_count",
         "event_macro_max_strength",
     ]
+    feature_cols.extend(rolling_event_feature_cols)
     if use_guba_sentiment:
         feature_cols.extend(GUBA_SENTIMENT_FEATURES)
     for col in feature_cols:
@@ -216,6 +265,9 @@ def build_model_dataset() -> int:
         for h in horizons:
             record[f"future_ret_{h}d"] = row.get(f"future_ret_{h}d")
             record[f"label_{h}d"] = row.get(f"label_{h}d")
+        for h in buy_horizons:
+            buy_value = row.get(f"buy_label_{h}d")
+            record[f"buy_label_{h}d"] = None if pd.isna(buy_value) else int(buy_value)
         records.append(record)
     count = upsert_dataframe(pd.DataFrame(records), "model_dataset_daily", ["trade_date", "index_code"])
     logger.info("built model dataset rows=%s", count)

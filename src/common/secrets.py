@@ -25,7 +25,12 @@ def load_secrets(
     key_file = Path(key_path)
 
     if not key_file.exists():
-        raise SecretsError(f"Secret key file not found: {key_file}")
+        raise SecretsError(
+            f"Secret key file not found: {key_file}\n"
+            "This project cannot read MySQL/API passwords without the matching local key. "
+            "Copy config/secrets.key from the original workspace, or recreate config/secrets.plain.yaml "
+            "and run: python .\\scripts\\init_secrets.py --force"
+        )
     if not enc_file.exists():
         raise SecretsError(f"Encrypted secrets file not found: {enc_file}")
 

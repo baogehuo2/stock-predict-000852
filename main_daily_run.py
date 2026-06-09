@@ -17,6 +17,7 @@ from src.features.build_model_dataset import build_model_dataset
 from src.features.build_sentiment_features import build_sentiment_features
 from src.llm.extract_event import extract_events_for_recent_news
 from src.modeling.predict import predict
+from src.modeling.train_buy_lgbm import train_buy_models
 from src.modeling.train_lgbm import train_models
 from src.report.generate_html_report import generate_html_report
 
@@ -35,6 +36,7 @@ STEPS = {
     "extract_events": extract_events_for_recent_news,
     "build_dataset": build_model_dataset,
     "train": train_models,
+    "train_buy": train_buy_models,
     "predict": predict,
     "report": generate_html_report,
 }

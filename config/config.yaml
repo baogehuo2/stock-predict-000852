@@ -32,6 +32,13 @@ model:
   high_confidence_threshold: 0.6
   random_state: 42
 
+binary_buy_model:
+  horizons: [5, 7]
+  label_thresholds:
+    "5": 0.0
+    "7": 0.0
+  probability_thresholds: [0.35, 0.40, 0.45, 0.50, 0.55, 0.60]
+
 sentiment:
   guba_pages: 5
   keywords:
