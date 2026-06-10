@@ -162,6 +162,9 @@ def train_short_models(
 ) -> dict[int, list[dict]]:
     cfg = get_config()
     short_cfg = cfg.get("binary_short_model", {})
+    if not short_cfg.get("enabled", True):
+        logger.warning("binary short model is disabled; skip training")
+        return {}
     horizons = [int(h) for h in short_cfg.get("horizons", [5, 7])]
     thresholds = thresholds or [
         float(x) for x in short_cfg.get("probability_thresholds", [0.35, 0.4, 0.45, 0.5, 0.55, 0.6])
