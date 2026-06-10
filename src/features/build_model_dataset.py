@@ -10,6 +10,7 @@ import pandas as pd
 from src.common.config import get_config
 from src.common.db import execute_sql, get_database_name, read_sql, upsert_dataframe
 from src.common.logger import get_logger
+from src.features.build_market_features import EXTRA_MARKET_FEATURE_COLS
 
 
 logger = get_logger(__name__)
@@ -39,17 +40,27 @@ def _buy_label(ret: float | None, threshold: float) -> int | None:
     return int(float(ret) > threshold)
 
 
-def _ensure_buy_label_columns(horizons: list[int]) -> None:
+def _short_label(ret: float | None, threshold: float) -> int | None:
+    if pd.isna(ret) or ret is None:
+        return None
+    return int(float(ret) < -threshold)
+
+
+def _ensure_binary_label_columns(buy_horizons: list[int], short_horizons: list[int]) -> None:
     database = get_database_name()
-    for horizon in horizons:
-        col = f"buy_label_{int(horizon)}d"
+    specs = []
+    for horizon in buy_horizons:
+        specs.append((f"buy_label_{int(horizon)}d", f"label_{int(horizon)}d"))
+    for horizon in short_horizons:
+        specs.append((f"short_label_{int(horizon)}d", f"buy_label_{int(horizon)}d"))
+    for col, after_col in specs:
         exists = read_sql(
             "SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS "
             "WHERE TABLE_SCHEMA=:database AND TABLE_NAME='model_dataset_daily' AND COLUMN_NAME=:column_name",
             {"database": database, "column_name": col},
         )
         if int(exists.iloc[0]["cnt"]) == 0:
-            execute_sql(f"ALTER TABLE model_dataset_daily ADD COLUMN `{col}` TINYINT NULL AFTER `label_{int(horizon)}d`")
+            execute_sql(f"ALTER TABLE model_dataset_daily ADD COLUMN `{col}` TINYINT NULL AFTER `{after_col}`")
 
 
 def _json_list(value: object) -> list[str]:
@@ -141,7 +152,10 @@ def build_model_dataset() -> int:
     buy_cfg = cfg.get("binary_buy_model", {})
     buy_horizons = [int(h) for h in buy_cfg.get("horizons", [5, 7])]
     buy_thresholds = {str(k): float(v) for k, v in buy_cfg.get("label_thresholds", {}).items()}
-    _ensure_buy_label_columns(buy_horizons)
+    short_cfg = cfg.get("binary_short_model", {})
+    short_horizons = [int(h) for h in short_cfg.get("horizons", [5, 7])]
+    short_thresholds = {str(k): float(v) for k, v in short_cfg.get("label_thresholds", {}).items()}
+    _ensure_binary_label_columns(buy_horizons, short_horizons)
     use_guba_sentiment = bool(cfg.get("features", {}).get("use_guba_sentiment", False))
     market = read_sql(
         "SELECT f.*, i.close FROM market_feature_daily f "
@@ -166,6 +180,12 @@ def build_model_dataset() -> int:
             market[ret_col] = close.shift(-h) / close - 1
         threshold = buy_thresholds.get(str(h), 0.0)
         market[f"buy_label_{h}d"] = market[ret_col].map(lambda ret, t=threshold: _buy_label(ret, t))
+    for h in short_horizons:
+        ret_col = f"future_ret_{h}d"
+        if ret_col not in market:
+            market[ret_col] = close.shift(-h) / close - 1
+        threshold = short_thresholds.get(str(h), 0.0)
+        market[f"short_label_{h}d"] = market[ret_col].map(lambda ret, t=threshold: _short_label(ret, t))
 
     if use_guba_sentiment:
         sentiment = read_sql(
@@ -215,6 +235,7 @@ def build_model_dataset() -> int:
         "relative_hs300",
         "relative_zz500",
         "relative_cyb",
+        *EXTRA_MARKET_FEATURE_COLS,
         "event_score",
         "event_count",
         "event_positive_count",
@@ -268,6 +289,9 @@ def build_model_dataset() -> int:
         for h in buy_horizons:
             buy_value = row.get(f"buy_label_{h}d")
             record[f"buy_label_{h}d"] = None if pd.isna(buy_value) else int(buy_value)
+        for h in short_horizons:
+            short_value = row.get(f"short_label_{h}d")
+            record[f"short_label_{h}d"] = None if pd.isna(short_value) else int(short_value)
         records.append(record)
     count = upsert_dataframe(pd.DataFrame(records), "model_dataset_daily", ["trade_date", "index_code"])
     logger.info("built model dataset rows=%s", count)

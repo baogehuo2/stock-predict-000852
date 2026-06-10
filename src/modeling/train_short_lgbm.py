@@ -42,7 +42,7 @@ def _split(df: pd.DataFrame, splits: dict | None = None) -> tuple[pd.DataFrame, 
 
 def _model_path(model_dir: Path, horizon: int, model_tag: str | None) -> Path:
     tag_part = f"_{model_tag}" if model_tag else ""
-    return model_dir / f"buy_lgbm{tag_part}_{horizon}d.joblib"
+    return model_dir / f"short_lgbm{tag_part}_{horizon}d.joblib"
 
 
 def _signal_metrics(
@@ -59,29 +59,34 @@ def _signal_metrics(
             "threshold": threshold,
             "signal_count": 0,
             "coverage": 0.0,
-            "buy_precision": None,
-            "buy_recall": None,
-            "positive_ret_rate": None,
+            "short_precision": None,
+            "short_recall": None,
+            "negative_ret_rate": None,
             "avg_future_ret": None,
             "median_future_ret": None,
-            "avg_buy_proba": None,
+            "avg_short_strategy_ret": None,
+            "median_short_strategy_ret": None,
+            "avg_short_proba": None,
         }
 
     y_true = signal[label_col].astype(int)
     full_true = part[label_col].astype(int)
     full_pred = pd.Series(0, index=part.index)
     full_pred.loc[signal.index] = 1
+    short_strategy_ret = -signal[ret_col]
     return {
         "rule": rule,
         "threshold": threshold,
         "signal_count": int(len(signal)),
         "coverage": float(len(signal) / len(part)) if len(part) else 0.0,
-        "buy_precision": float(precision_score(y_true, pd.Series(1, index=signal.index), zero_division=0)),
-        "buy_recall": float(recall_score(full_true, full_pred, zero_division=0)),
-        "positive_ret_rate": float((signal[ret_col] > 0).mean()),
+        "short_precision": float(precision_score(y_true, pd.Series(1, index=signal.index), zero_division=0)),
+        "short_recall": float(recall_score(full_true, full_pred, zero_division=0)),
+        "negative_ret_rate": float((signal[ret_col] < 0).mean()),
         "avg_future_ret": float(signal[ret_col].mean()),
         "median_future_ret": float(signal[ret_col].median()),
-        "avg_buy_proba": float(signal["buy_proba"].mean()) if "buy_proba" in signal else None,
+        "avg_short_strategy_ret": float(short_strategy_ret.mean()),
+        "median_short_strategy_ret": float(short_strategy_ret.median()),
+        "avg_short_proba": float(signal["short_proba"].mean()) if "short_proba" in signal else None,
     }
 
 
@@ -95,90 +100,60 @@ def _evaluate_part(
     model_tag: str | None,
 ) -> list[dict]:
     ret_col = f"future_ret_{horizon}d"
-    label_col = f"buy_label_{horizon}d"
+    label_col = f"short_label_{horizon}d"
     if part.empty:
         return []
 
     eval_part = part.copy()
-    eval_part["pred_buy"] = model.predict(eval_part[features]).astype(int)
+    eval_part["pred_short"] = model.predict(eval_part[features]).astype(int)
     proba = model.predict_proba(eval_part[features])
-    buy_class_index = list(model.named_steps["model"].classes_).index(1)
-    eval_part["buy_proba"] = proba[:, buy_class_index]
+    short_class_index = list(model.named_steps["model"].classes_).index(1)
+    eval_part["short_proba"] = proba[:, short_class_index]
 
     rows = []
-    baseline = _signal_metrics(eval_part, eval_part, ret_col, label_col, "baseline_all_rows", None)
-    baseline.update(
-        {
-            "horizon": horizon,
-            "split": split_name,
-            "model_tag": model_tag or "default",
-        }
-    )
+    baseline = _signal_metrics(eval_part, eval_part, ret_col, label_col, "baseline_all_rows_short", None)
+    baseline.update({"horizon": horizon, "split": split_name, "model_tag": model_tag or "default"})
     rows.append(baseline)
 
     baseline_rules = [
-        ("baseline_ret_5d_positive", "f_ret_5d"),
-        ("baseline_ma20_gap_positive", "f_ma20_gap"),
+        ("baseline_ret_5d_negative", "f_ret_5d"),
+        ("baseline_ma20_gap_negative", "f_ma20_gap"),
     ]
     for rule_name, feature_col in baseline_rules:
         if feature_col in eval_part:
-            signal = eval_part[pd.to_numeric(eval_part[feature_col], errors="coerce") > 0]
+            signal = eval_part[pd.to_numeric(eval_part[feature_col], errors="coerce") < 0]
             metrics = _signal_metrics(eval_part, signal, ret_col, label_col, rule_name, None)
-            metrics.update(
-                {
-                    "horizon": horizon,
-                    "split": split_name,
-                    "model_tag": model_tag or "default",
-                }
-            )
+            metrics.update({"horizon": horizon, "split": split_name, "model_tag": model_tag or "default"})
             rows.append(metrics)
 
-    predicted_buy = eval_part[eval_part["pred_buy"] == 1]
-    pred_metrics = _signal_metrics(eval_part, predicted_buy, ret_col, label_col, "predicted_buy_label", None)
-    pred_metrics.update(
-        {
-            "horizon": horizon,
-            "split": split_name,
-            "model_tag": model_tag or "default",
-        }
-    )
+    predicted_short = eval_part[eval_part["pred_short"] == 1]
+    pred_metrics = _signal_metrics(eval_part, predicted_short, ret_col, label_col, "predicted_short_label", None)
+    pred_metrics.update({"horizon": horizon, "split": split_name, "model_tag": model_tag or "default"})
     rows.append(pred_metrics)
 
     for threshold in thresholds:
-        signal = eval_part[eval_part["buy_proba"] >= threshold]
-        metrics = _signal_metrics(eval_part, signal, ret_col, label_col, "buy_probability", threshold)
-        metrics.update(
-            {
-                "horizon": horizon,
-                "split": split_name,
-                "model_tag": model_tag or "default",
-            }
-        )
+        signal = eval_part[eval_part["short_proba"] >= threshold]
+        metrics = _signal_metrics(eval_part, signal, ret_col, label_col, "short_probability", threshold)
+        metrics.update({"horizon": horizon, "split": split_name, "model_tag": model_tag or "default"})
         rows.append(metrics)
 
     for year, year_part in eval_part.groupby(eval_part["trade_date"].dt.year):
-        year_signal = year_part[year_part["pred_buy"] == 1]
+        year_signal = year_part[year_part["pred_short"] == 1]
         year_metrics = _signal_metrics(
             year_part,
             year_signal,
             ret_col,
             label_col,
-            f"predicted_buy_label_year_{year}",
+            f"predicted_short_label_year_{year}",
             None,
         )
-        year_metrics.update(
-            {
-                "horizon": horizon,
-                "split": split_name,
-                "model_tag": model_tag or "default",
-            }
-        )
+        year_metrics.update({"horizon": horizon, "split": split_name, "model_tag": model_tag or "default"})
         rows.append(year_metrics)
 
     return rows
 
 
-def train_buy_models(
+def train_short_models(
     splits: dict | None = None,
     model_tag: str | None = None,
     min_train_rows: int = 200,
@@ -186,9 +161,11 @@ def train_buy_models(
     output_csv: str | None = None,
 ) -> dict[int, list[dict]]:
     cfg = get_config()
-    buy_cfg = cfg.get("binary_buy_model", {})
-    horizons = [int(h) for h in buy_cfg.get("horizons", [5, 7])]
-    thresholds = thresholds or [float(x) for x in buy_cfg.get("probability_thresholds", [0.35, 0.4, 0.45, 0.5, 0.55, 0.6])]
+    short_cfg = cfg.get("binary_short_model", {})
+    horizons = [int(h) for h in short_cfg.get("horizons", [5, 7])]
+    thresholds = thresholds or [
+        float(x) for x in short_cfg.get("probability_thresholds", [0.35, 0.4, 0.45, 0.5, 0.55, 0.6])
+    ]
 
     df = load_dataset()
     if df.empty:
@@ -205,7 +182,7 @@ def train_buy_models(
     effective_splits = dict(splits or cfg["model"]["splits"])
     train, valid, test = _split(df, effective_splits)
     logger.info(
-        "train binary buy split rows train=%s valid=%s test=%s splits=%s model_tag=%s",
+        "train binary short split rows train=%s valid=%s test=%s splits=%s model_tag=%s",
         len(train),
         len(valid),
         len(test),
@@ -217,15 +194,15 @@ def train_buy_models(
     output: dict[int, list[dict]] = {}
     for horizon in horizons:
         ret_col = f"future_ret_{horizon}d"
-        label_col = f"buy_label_{horizon}d"
+        label_col = f"short_label_{horizon}d"
         if label_col not in df.columns:
-            raise RuntimeError(f"{label_col} is missing. Run build_dataset first to generate binary buy labels.")
+            raise RuntimeError(f"{label_col} is missing. Run build_dataset first to generate binary short labels.")
 
         train_h = train.dropna(subset=[ret_col, label_col]).copy()
         valid_h = valid.dropna(subset=[ret_col, label_col]).copy()
         test_h = test.dropna(subset=[ret_col, label_col]).copy()
         if len(train_h) < min_train_rows:
-            raise RuntimeError(f"Not enough training rows for buy {horizon}d: {len(train_h)}")
+            raise RuntimeError(f"Not enough training rows for short {horizon}d: {len(train_h)}")
 
         usable_features = [col for col in features if train_h[col].notna().any()]
         dropped_features = [col for col in features if col not in usable_features]
@@ -234,7 +211,7 @@ def train_buy_models(
 
         y_train = train_h[label_col].astype(int)
         if y_train.nunique() < 2:
-            raise RuntimeError(f"buy {horizon}d training label has only one class.")
+            raise RuntimeError(f"short {horizon}d training label has only one class.")
 
         model = Pipeline(
             [
@@ -259,7 +236,7 @@ def train_buy_models(
             "horizon": horizon,
             "label_col": label_col,
             "ret_col": ret_col,
-            "model_type": "binary_buy",
+            "model_type": "binary_short",
             "splits": effective_splits,
         }
         joblib.dump(bundle, _model_path(model_dir, horizon, model_tag))
@@ -269,22 +246,22 @@ def train_buy_models(
         rows.extend(_evaluate_part(test_h, model, usable_features, horizon, "test", thresholds, model_tag))
         output[horizon] = rows
         all_rows.extend(rows)
-        logger.info("trained binary buy %sd rows=%s", horizon, len(rows))
+        logger.info("trained binary short %sd rows=%s", horizon, len(rows))
 
-    metrics_name = f"buy_metrics_{model_tag}.joblib" if model_tag else "buy_metrics.joblib"
+    metrics_name = f"short_metrics_{model_tag}.joblib" if model_tag else "short_metrics.joblib"
     joblib.dump(output, model_dir / metrics_name)
 
     if output_csv:
         out_path = project_path(output_csv)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         pd.DataFrame(all_rows).to_csv(out_path, index=False, encoding="utf-8-sig")
-        print(f"saved buy model report path={out_path} rows={len(all_rows)}")
+        print(f"saved short model report path={out_path} rows={len(all_rows)}")
 
     return output
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Train binary buy LightGBM models and evaluate buy signal quality.")
+    parser = argparse.ArgumentParser(description="Train binary short LightGBM models and evaluate short signal quality.")
     parser.add_argument("--train-start")
     parser.add_argument("--train-end")
     parser.add_argument("--valid-start")
@@ -292,11 +269,8 @@ def main() -> None:
     parser.add_argument("--test-start")
     parser.add_argument("--model-tag")
     parser.add_argument("--min-train-rows", type=int, default=200)
-    parser.add_argument(
-        "--thresholds",
-        help="Comma-separated buy probability thresholds, e.g. 0.35,0.40,0.45,0.50,0.55,0.60.",
-    )
-    parser.add_argument("--output-csv", help="Optional CSV output path, e.g. data/reports/buy_signal_quality.csv.")
+    parser.add_argument("--thresholds", help="Comma-separated short probability thresholds.")
+    parser.add_argument("--output-csv", help="Optional CSV output path, e.g. data/reports/short_signal_quality.csv.")
     args = parser.parse_args()
     split_values = {
         "train_start": args.train_start,
@@ -310,7 +284,7 @@ def main() -> None:
         missing = sorted(set(split_values) - set(splits))
         raise SystemExit(f"Near-term split override requires all split dates. Missing: {missing}")
 
-    result = train_buy_models(
+    result = train_short_models(
         splits=splits or None,
         model_tag=args.model_tag,
         min_train_rows=args.min_train_rows,
@@ -318,7 +292,7 @@ def main() -> None:
         output_csv=args.output_csv,
     )
     for horizon, rows in result.items():
-        print(f"\n=== buy {horizon}d ===")
+        print(f"\n=== short {horizon}d ===")
         df = pd.DataFrame(rows)
         cols = [
             "split",
@@ -326,12 +300,13 @@ def main() -> None:
             "threshold",
             "signal_count",
             "coverage",
-            "buy_precision",
-            "buy_recall",
-            "positive_ret_rate",
+            "short_precision",
+            "short_recall",
+            "negative_ret_rate",
             "avg_future_ret",
-            "median_future_ret",
-            "avg_buy_proba",
+            "avg_short_strategy_ret",
+            "median_short_strategy_ret",
+            "avg_short_proba",
         ]
         print(df[cols].to_string(index=False))
 

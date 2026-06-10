@@ -39,6 +39,21 @@ binary_buy_model:
     "7": 0.0
   probability_thresholds: [0.35, 0.40, 0.45, 0.50, 0.55, 0.60]
 
+binary_short_model:
+  horizons: [5, 7]
+  label_thresholds:
+    "5": 0.0
+    "7": 0.0
+  probability_thresholds: [0.35, 0.40, 0.45, 0.50, 0.55, 0.60]
+
+market_regime:
+  causal_bull_score_threshold: 2
+  causal_bear_score_threshold: -2
+  evaluation_start: "2021-01-01"
+  bear_periods:
+    - start: "2021-07-01"
+      end: "2024-08-24"
+
 sentiment:
   guba_pages: 5
   keywords:

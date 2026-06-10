@@ -19,6 +19,7 @@ from src.llm.extract_event import extract_events_for_recent_news
 from src.modeling.predict import predict
 from src.modeling.train_buy_lgbm import train_buy_models
 from src.modeling.train_lgbm import train_models
+from src.modeling.train_short_lgbm import train_short_models
 from src.report.generate_html_report import generate_html_report
 
 
@@ -37,6 +38,7 @@ STEPS = {
     "build_dataset": build_model_dataset,
     "train": train_models,
     "train_buy": train_buy_models,
+    "train_short": train_short_models,
     "predict": predict,
     "report": generate_html_report,
 }
