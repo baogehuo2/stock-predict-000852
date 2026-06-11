@@ -77,6 +77,30 @@ init_db -> collect_index -> collect_etf -> collect_futures -> collect_guba -> co
 
 注意：确认表要求大模型失败时中断流程，所以 `extract_events` 失败会直接停止。
 
+## 模型 1.0 每日手动更新
+
+双击运行或在 PowerShell 中执行：
+
+```powershell
+.\scripts\run_buy_signal_daily.bat
+```
+
+脚本以运行当天为结束日期，自动回看前 15 个自然日，依次补充指数行情、历史新闻、尚未抽取且命中模型关键词的新闻事件，重建市场特征和模型数据集，并重新生成该窗口内的正式 Buy 信号。数据库采用去重或 upsert，允许隔几天运行一次，也可以在失败修复后直接重新运行。
+
+默认信号文件：
+
+```text
+data/reports/buy_signal_v1_recent.csv
+```
+
+临时扩大回看天数时，可以传入自然日数量：
+
+```powershell
+.\scripts\run_buy_signal_daily.bat 30
+```
+
+该流程使用已经封版的正式模型，不重新训练模型，也不运行滚动评估。
+
 ## 报告
 
 模型 1.0 统一信号 CSV 输出到：
