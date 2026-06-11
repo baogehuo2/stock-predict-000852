@@ -313,3 +313,24 @@ CREATE TABLE IF NOT EXISTS prediction_result (
     UNIQUE KEY uk_prediction (trade_date, horizon),
     KEY idx_trade_date (trade_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS buy_signal_daily (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    trade_date DATE NOT NULL,
+    model_version VARCHAR(64) NOT NULL,
+    feature_version VARCHAR(64) NOT NULL,
+    model_tag VARCHAR(64) NOT NULL,
+    horizon INT NOT NULL,
+    causal_regime VARCHAR(16) NOT NULL,
+    buy_proba DECIMAL(12,8) NOT NULL,
+    buy_threshold DECIMAL(12,8) NOT NULL,
+    direction VARCHAR(16) NOT NULL,
+    signal_strength VARCHAR(16) NOT NULL,
+    pred_ret DECIMAL(12,8) NULL,
+    future_ret_7d DECIMAL(12,8) NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_buy_signal (trade_date, model_version, horizon),
+    KEY idx_buy_signal_date (trade_date),
+    KEY idx_buy_signal_direction (direction)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

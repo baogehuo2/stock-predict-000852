@@ -34,6 +34,13 @@ model:
 
 binary_buy_model:
   horizons: [7]
+  model_version: buy-signal-v1.0
+  model_tag: buy_v1_7d
+  research_model_file: models/buy_lgbm_buy_v1_7d_7d.joblib
+  final_model_file: models/buy_lgbm_buy_signal_v1_7d.joblib
+  feature_version: buy-features-v1.0
+  feature_manifest: config/buy_features_v1.json
+  signal_threshold: 0.60
   label_thresholds:
     "5": 0.0
     "7": 0.005

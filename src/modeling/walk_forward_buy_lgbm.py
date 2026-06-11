@@ -9,9 +9,9 @@ from sklearn.pipeline import Pipeline
 from src.common.config import get_config, project_path
 from src.common.lightgbm_compat import disable_broken_dask_autoload
 from src.common.logger import get_logger
-from src.modeling.data import feature_columns, load_dataset
+from src.modeling.buy_feature_set import select_buy_features
+from src.modeling.data import load_dataset
 from src.modeling.market_regime import assign_evaluation_regime
-from src.modeling.train_lgbm import GUBA_SENTIMENT_FEATURES
 
 
 disable_broken_dask_autoload()
@@ -206,9 +206,7 @@ def walk_forward_buy_evaluation(
     df = load_dataset()
     if df.empty:
         raise RuntimeError("model_dataset_daily is empty. Build dataset first.")
-    features = feature_columns(df)
-    if not cfg.get("features", {}).get("use_guba_sentiment", False):
-        features = [col for col in features if col not in GUBA_SENTIMENT_FEATURES]
+    features = select_buy_features(df, buy_cfg)
     if not features:
         raise RuntimeError("No feature columns found in dataset.")
 
