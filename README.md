@@ -1,4 +1,8 @@
-# 中证1000短期趋势预测系统
+# 中证1000 7日 Buy 信号研究系统
+
+当前稳定版本：`buy-signal-v1.0`。
+
+模型 1.0 使用未来 7 日收益超过 0.5% 的二分类标签、因果牛市硬门控和 raw Buy 评分 0.60 门槛。模型特征冻结为 `buy-features-v1.0`，共 211 个字段。原三分类模型及相关入口继续保留作为对照基线。
 
 本项目按 `开发补充信息确认表.md` 落地第一版完整闭环：行情、ETF、期货、东方财富股吧、新闻、大模型事件抽取、技术/舆情/事件特征、LightGBM 训练、预测、回测评估和 HTML 日报。
 
@@ -46,9 +50,8 @@ python .\main_daily_run.py --step init_db
 python .\main_daily_run.py --step collect_index
 python .\main_daily_run.py --step build_market_features
 python .\main_daily_run.py --step build_dataset
-python .\main_daily_run.py --step train
-python .\main_daily_run.py --step predict
-python .\main_daily_run.py --step report
+python .\main_daily_run.py --step train_buy_final
+python .\main_daily_run.py --step generate_buy_signal
 ```
 
 也可以用 PowerShell 包装脚本：
@@ -68,20 +71,20 @@ python .\main_daily_run.py
 ```text
 init_db -> collect_index -> collect_etf -> collect_futures -> collect_guba -> collect_news
 -> build_market_features -> build_sentiment_features -> extract_events
--> build_dataset -> train -> predict -> report
+-> build_dataset -> train_buy_final -> generate_buy_signal
 ```
 
 注意：确认表要求大模型失败时中断流程，所以 `extract_events` 失败会直接停止。
 
 ## 报告
 
-HTML 日报输出到：
+模型 1.0 统一信号 CSV 输出到：
 
 ```text
-data/reports/
+data/reports/buy_signal_v1.csv
 ```
 
-报告包含 3/5/7 日方向预测、预测涨跌幅、置信度、技术/舆情/事件解释、历史相似日期和风险提示。
+信号同时写入 MySQL 表 `buy_signal_daily`。固定字段包括模型版本、特征版本、因果状态、Buy 评分、门槛、方向和未来 7 日实际收益。旧三分类 `train/predict/report` 步骤仍可手动运行。
 
 ## 合规说明
 
