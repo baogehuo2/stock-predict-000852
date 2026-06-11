@@ -52,6 +52,7 @@ python .\main_daily_run.py --step build_market_features
 python .\main_daily_run.py --step build_dataset
 python .\main_daily_run.py --step train_buy_final
 python .\main_daily_run.py --step generate_buy_signal
+python .\main_daily_run.py --step report_buy_signal
 ```
 
 也可以用 PowerShell 包装脚本：
@@ -85,6 +86,18 @@ data/reports/buy_signal_v1.csv
 ```
 
 信号同时写入 MySQL 表 `buy_signal_daily`。固定字段包括模型版本、特征版本、因果状态、Buy 评分、门槛、方向和未来 7 日实际收益。旧三分类 `train/predict/report` 步骤仍可手动运行。
+
+Buy 信号可视化看板输出到：
+
+```text
+data/reports/buy_signal_v1_dashboard.html
+```
+
+运行命令：
+
+```powershell
+python .\main_daily_run.py --step report_buy_signal
+```
 
 ## 合规说明
 
@@ -132,3 +145,4 @@ python .\src\collectors\collect_guba_history_playwright.py --bar-name 中证1000
 ```
 
 浏览器会话保存在 `data/browser/eastmoney`，通过验证码后的 cookie 会保留，后续可复用。
+

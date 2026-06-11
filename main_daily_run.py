@@ -22,6 +22,7 @@ from src.modeling.train_buy_lgbm import train_buy_models
 from src.modeling.train_final_buy_model import train_final_buy_model
 from src.modeling.train_lgbm import train_models
 from src.report.generate_html_report import generate_html_report
+from src.report.generate_buy_signal_report import generate_buy_signal_report
 
 
 logger = get_logger(__name__)
@@ -43,6 +44,7 @@ STEPS = {
     "predict": predict,
     "generate_buy_signal": generate_buy_signals,
     "report": generate_html_report,
+    "report_buy_signal": generate_buy_signal_report,
 }
 
 DEFAULT_FLOW = [
@@ -90,3 +92,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
