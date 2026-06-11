@@ -64,7 +64,9 @@ def _metrics(
     sample_mode: str,
     scope: str,
 ) -> dict:
-    correct = signal["future_ret"] > 0
+    label_threshold = float(universe["label_threshold"].iloc[0])
+    correct = signal["future_ret"] > label_threshold
+    actual_up = signal["future_ret"] > 0
     return {
         "scope": scope,
         "test_year": int(universe["test_year"].iloc[0]) if scope == "year" else None,
@@ -72,10 +74,12 @@ def _metrics(
         "gate": gate,
         "sample_mode": sample_mode,
         "base_buy_threshold": float(universe["base_buy_threshold"].iloc[0]),
+        "label_threshold": label_threshold,
         "universe_rows": int(len(universe)),
         "signal_count": int(len(signal)),
         "coverage": float(len(signal) / len(universe)) if len(universe) else 0.0,
         "precision": float(correct.mean()) if len(signal) else None,
+        "actual_up_rate": float(actual_up.mean()) if len(signal) else None,
         "avg_future_ret": float(signal["future_ret"].mean()) if len(signal) else None,
         "median_future_ret": float(signal["future_ret"].median()) if len(signal) else None,
         "avg_buy_proba": float(signal["buy_proba"].mean()) if len(signal) else None,
@@ -112,6 +116,7 @@ def evaluate_signal_gates(
         "horizon",
         "future_ret",
         "buy_proba",
+        "label_threshold",
         "f_is_bull_trend",
         "f_is_bear_trend",
     }
@@ -152,6 +157,7 @@ def main() -> None:
         "gate",
         "signal_count",
         "precision",
+        "actual_up_rate",
         "avg_future_ret",
         "median_future_ret",
         "bull_signal_count",

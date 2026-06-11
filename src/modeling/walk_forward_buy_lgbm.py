@@ -88,8 +88,11 @@ def _metric_row(
     regime: str,
 ) -> dict:
     strategy_ret = signal["future_ret"]
-    correct = signal["future_ret"] > 0
-    natural_correct = universe["future_ret"] > 0
+    label_threshold = float(universe["label_threshold"].iloc[0])
+    correct = signal["future_ret"] > label_threshold
+    actual_up = signal["future_ret"] > 0
+    natural_correct = universe["future_ret"] > label_threshold
+    natural_actual_up = universe["future_ret"] > 0
     natural_strategy_ret = universe["future_ret"]
     return {
         "test_year": int(universe["test_year"].iloc[0]),
@@ -97,6 +100,7 @@ def _metric_row(
         "regime": regime,
         "side": "buy",
         "threshold": threshold,
+        "label_threshold": label_threshold,
         "sample_mode": sample_mode,
         "train_start": universe["train_start"].iloc[0],
         "train_end": universe["train_end"].iloc[0],
@@ -105,10 +109,12 @@ def _metric_row(
         "signal_count": int(len(signal)),
         "coverage": float(len(signal) / len(universe)) if len(universe) else 0.0,
         "precision": float(correct.mean()) if len(signal) else None,
+        "actual_up_rate": float(actual_up.mean()) if len(signal) else None,
         "avg_strategy_ret": float(strategy_ret.mean()) if len(signal) else None,
         "median_strategy_ret": float(strategy_ret.median()) if len(signal) else None,
         "avg_proba": float(signal["buy_proba"].mean()) if len(signal) else None,
         "natural_precision": float(natural_correct.mean()) if len(universe) else None,
+        "natural_actual_up_rate": float(natural_actual_up.mean()) if len(universe) else None,
         "natural_avg_strategy_ret": float(natural_strategy_ret.mean()) if len(universe) else None,
         "precision_lift": float(correct.mean() - natural_correct.mean()) if len(signal) else None,
         "avg_strategy_ret_lift": (
@@ -137,10 +143,12 @@ def _aggregate_summary(summary: pd.DataFrame) -> pd.DataFrame:
         return summary
     data = summary.copy()
     data["correct_count"] = data["precision"] * data["signal_count"]
+    data["actual_up_count"] = data["actual_up_rate"] * data["signal_count"]
     data["strategy_ret_sum"] = data["avg_strategy_ret"] * data["signal_count"]
     data["natural_correct_count"] = data["natural_precision"] * data["regime_rows"]
+    data["natural_actual_up_count"] = data["natural_actual_up_rate"] * data["regime_rows"]
     data["natural_strategy_ret_sum"] = data["natural_avg_strategy_ret"] * data["regime_rows"]
-    group_cols = ["horizon", "regime", "side", "threshold", "sample_mode"]
+    group_cols = ["horizon", "regime", "side", "threshold", "label_threshold", "sample_mode"]
     result = (
         data.groupby(group_cols, as_index=False)
         .agg(
@@ -148,23 +156,29 @@ def _aggregate_summary(summary: pd.DataFrame) -> pd.DataFrame:
             regime_rows=("regime_rows", "sum"),
             signal_count=("signal_count", "sum"),
             correct_count=("correct_count", "sum"),
+            actual_up_count=("actual_up_count", "sum"),
             strategy_ret_sum=("strategy_ret_sum", "sum"),
             natural_correct_count=("natural_correct_count", "sum"),
+            natural_actual_up_count=("natural_actual_up_count", "sum"),
             natural_strategy_ret_sum=("natural_strategy_ret_sum", "sum"),
         )
     )
     result["coverage"] = result["signal_count"] / result["regime_rows"]
     result["precision"] = result["correct_count"] / result["signal_count"]
+    result["actual_up_rate"] = result["actual_up_count"] / result["signal_count"]
     result["avg_strategy_ret"] = result["strategy_ret_sum"] / result["signal_count"]
     result["natural_precision"] = result["natural_correct_count"] / result["regime_rows"]
+    result["natural_actual_up_rate"] = result["natural_actual_up_count"] / result["regime_rows"]
     result["natural_avg_strategy_ret"] = result["natural_strategy_ret_sum"] / result["regime_rows"]
     result["precision_lift"] = result["precision"] - result["natural_precision"]
     result["avg_strategy_ret_lift"] = result["avg_strategy_ret"] - result["natural_avg_strategy_ret"]
     return result.drop(
         columns=[
             "correct_count",
+            "actual_up_count",
             "strategy_ret_sum",
             "natural_correct_count",
+            "natural_actual_up_count",
             "natural_strategy_ret_sum",
         ]
     )
@@ -182,7 +196,12 @@ def walk_forward_buy_evaluation(
     aggregate_csv: str | None = None,
 ) -> list[dict]:
     cfg = get_config()
-    horizons = horizons or [int(h) for h in cfg.get("binary_buy_model", {}).get("horizons", [7])]
+    buy_cfg = cfg.get("binary_buy_model", {})
+    horizons = horizons or [int(h) for h in buy_cfg.get("horizons", [7])]
+    label_thresholds = {
+        int(horizon): float(value)
+        for horizon, value in buy_cfg.get("label_thresholds", {}).items()
+    }
     thresholds = thresholds or [0.6, 0.7, 0.8]
     df = load_dataset()
     if df.empty:
@@ -245,6 +264,7 @@ def walk_forward_buy_evaluation(
             part["evaluation_regime"] = assign_evaluation_regime(part["trade_date"])
             part["test_year"] = test_year
             part["horizon"] = horizon
+            part["label_threshold"] = label_thresholds.get(horizon, 0.0)
             part["train_start"] = train_start
             part["train_end"] = train_h["trade_date"].max().strftime("%Y-%m-%d")
             part["train_rows"] = len(train_h)
@@ -320,7 +340,9 @@ def main() -> None:
         "sample_mode",
         "signal_count",
         "precision",
+        "actual_up_rate",
         "natural_precision",
+        "natural_actual_up_rate",
         "precision_lift",
         "avg_strategy_ret",
         "natural_avg_strategy_ret",
