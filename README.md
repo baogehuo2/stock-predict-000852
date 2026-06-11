@@ -145,4 +145,3 @@ python .\src\collectors\collect_guba_history_playwright.py --bar-name 中证1000
 ```
 
 浏览器会话保存在 `data/browser/eastmoney`，通过验证码后的 cookie 会保留，后续可复用。
-

@@ -68,4 +68,3 @@ The command generated the HTML successfully. At verification time, `buy_signal_d
 - Review the dashboard after current data and signals have been updated.
 - Commit and push only from `codex/buy-signal-dashboard` when the user confirms.
 - Keep formal backtesting outside this branch.
-
