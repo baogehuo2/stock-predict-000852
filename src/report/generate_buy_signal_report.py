@@ -20,6 +20,12 @@ import matplotlib.pyplot as plt
 
 logger = get_logger(__name__)
 
+UP_COLOR = "#b42318"
+DOWN_COLOR = "#067647"
+NEUTRAL_COLOR = "#98a2b3"
+INFO_COLOR = "#175cd3"
+THRESHOLD_COLOR = "#f79009"
+
 HTML_TEMPLATE = """<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -36,8 +42,8 @@ HTML_TEMPLATE = """<!doctype html>
       --muted: #68707c;
       --long: #b42318;
       --neutral: #475467;
-      --bull: #e9f7ef;
-      --bear: #fff0ee;
+      --bull: #fff0ee;
+      --bear: #e9f7ef;
       --accent: #175cd3;
     }
     * { box-sizing: border-box; }
@@ -94,8 +100,8 @@ HTML_TEMPLATE = """<!doctype html>
     .tag { display: inline-block; padding: 3px 7px; border-radius: 4px; font-weight: 600; }
     .tag-long { color: var(--long); background: #fff0ee; }
     .tag-neutral { color: var(--neutral); background: #f2f4f7; }
-    .tag-bull { color: #067647; background: var(--bull); }
-    .tag-bear { color: #b42318; background: var(--bear); }
+    .tag-bull { color: #b42318; background: var(--bull); }
+    .tag-bear { color: #067647; background: var(--bear); }
     .tag-neutral-regime { color: var(--neutral); background: #f2f4f7; }
     footer { margin-top: 28px; color: var(--muted); font-size: 12px; line-height: 1.7; }
     @media (max-width: 900px) {
@@ -203,11 +209,11 @@ def _score_chart(signals: pd.DataFrame) -> str | None:
     if signals.empty:
         return None
     fig, ax = plt.subplots(figsize=(11.2, 4.2))
-    ax.plot(signals["trade_date"], signals["buy_proba"], color="#175cd3", marker="o", markersize=3, linewidth=1.6, label="Buy score")
-    ax.plot(signals["trade_date"], signals["buy_threshold"], color="#b42318", linestyle="--", linewidth=1.3, label="Threshold")
+    ax.plot(signals["trade_date"], signals["buy_proba"], color=INFO_COLOR, marker="o", markersize=3, linewidth=1.6, label="Buy score")
+    ax.plot(signals["trade_date"], signals["buy_threshold"], color=THRESHOLD_COLOR, linestyle="--", linewidth=1.3, label="Threshold")
     long_rows = signals[signals["direction"] == "long"]
     if not long_rows.empty:
-        ax.scatter(long_rows["trade_date"], long_rows["buy_proba"], color="#b42318", marker="^", s=55, label="Long", zorder=4)
+        ax.scatter(long_rows["trade_date"], long_rows["buy_proba"], color=UP_COLOR, marker="^", s=55, label="Long", zorder=4)
     ax.set_ylim(0, 1)
     ax.set_ylabel("Score")
     ax.grid(axis="y", alpha=0.25)
@@ -225,7 +231,7 @@ def _price_chart(signals: pd.DataFrame, prices: pd.DataFrame) -> str | None:
     ax.plot(merged["trade_date"], merged["close"], color="#344054", linewidth=1.7, label="CSI 1000 close")
     long_rows = merged[merged["direction"] == "long"]
     if not long_rows.empty:
-        ax.scatter(long_rows["trade_date"], long_rows["close"], color="#b42318", marker="^", s=58, label="Long", zorder=4)
+        ax.scatter(long_rows["trade_date"], long_rows["close"], color=UP_COLOR, marker="^", s=58, label="Long", zorder=4)
     ax.set_ylabel("Close")
     ax.grid(axis="y", alpha=0.25)
     ax.legend(frameon=False, loc="upper left")
@@ -238,11 +244,14 @@ def _return_chart(signals: pd.DataFrame) -> str | None:
     realized = signals[(signals["direction"] == "long") & signals["future_ret_7d"].notna()].copy()
     if realized.empty:
         return None
-    colors = ["#067647" if value > 0.005 else "#b42318" for value in realized["future_ret_7d"]]
+    colors = [
+        UP_COLOR if value > 0 else DOWN_COLOR if value < 0 else NEUTRAL_COLOR
+        for value in realized["future_ret_7d"]
+    ]
     fig, ax = plt.subplots(figsize=(11.2, 4.2))
     ax.bar(realized["trade_date"], realized["future_ret_7d"] * 100, color=colors, width=2.5)
-    ax.axhline(0.5, color="#175cd3", linestyle="--", linewidth=1.2, label="Target 0.5%")
-    ax.axhline(0, color="#98a2b3", linewidth=0.8)
+    ax.axhline(0.5, color=INFO_COLOR, linestyle="--", linewidth=1.2, label="Target 0.5%")
+    ax.axhline(0, color=NEUTRAL_COLOR, linewidth=0.8)
     ax.set_ylabel("Future 7D return (%)")
     ax.grid(axis="y", alpha=0.25)
     ax.legend(frameon=False, loc="upper left")
