@@ -1,0 +1,22 @@
+CREATE TABLE IF NOT EXISTS bottom_model_dataset_daily (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    trade_date DATE NOT NULL,
+    index_code VARCHAR(20) NOT NULL,
+    trade_pos INT NOT NULL,
+    is_candidate TINYINT NOT NULL,
+    candidate_score INT NOT NULL,
+    future_ret_15d DECIMAL(12,8) NULL,
+    future_mfe_15d DECIMAL(12,8) NULL,
+    future_mae_15d DECIMAL(12,8) NULL,
+    target_hit_day INT NULL,
+    pre_target_mae DECIMAL(12,8) NULL,
+    terminal_rebound_label TINYINT NULL,
+    path_rebound_label TINYINT NULL,
+    quality_bottom_label TINYINT NULL,
+    continuation_risk_label TINYINT NULL,
+    feature_json JSON NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_bottom_dataset (trade_date, index_code),
+    KEY idx_bottom_candidate (is_candidate, trade_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
