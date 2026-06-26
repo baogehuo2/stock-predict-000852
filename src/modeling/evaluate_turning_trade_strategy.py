@@ -17,7 +17,7 @@ TRADE_OUTPUT = "data/reports/manual_weak_turning_trade_strategy_trades.csv"
 EQUITY_OUTPUT = "data/reports/manual_weak_turning_trade_strategy_equity.csv"
 
 DEFAULT_MODELS = ["lightgbm", "logistic", "xgboost", "bp"]
-DEFAULT_STRATEGIES = ["scale_in", "risk_exit", "compressed_regions"]
+DEFAULT_STRATEGIES = ["scale_in", "risk_exit", "compressed_regions", "indicator_stop"]
 
 TRADE_COLUMNS = [
     "model_kind",
@@ -40,6 +40,14 @@ TRADE_COLUMNS = [
     "exit_is_manual_sell_window",
     "exit_reason",
     "status",
+]
+
+INDICATOR_STOP_COLUMNS = [
+    "cci_turn_down_below_100",
+    "kdj_turn_down",
+    "rsi_turn_down",
+    "kdj_dead_cross",
+    "rsi_overbought",
 ]
 
 
@@ -81,6 +89,10 @@ def _normalize_strategy(strategy: str) -> str:
         "add": "scale_in",
         "risk": "risk_exit",
         "stop": "risk_exit",
+        "indicator": "indicator_stop",
+        "indicator_exit": "indicator_stop",
+        "indicator_stop_loss": "indicator_stop",
+        "technical_stop": "indicator_stop",
         "compress": "compressed_regions",
         "compressed": "compressed_regions",
     }
@@ -98,10 +110,54 @@ def _load_target_index() -> str:
     return str(cfg.get("model", {}).get("target_index", "000852"))
 
 
+def _rsi(close: pd.Series, window: int) -> pd.Series:
+    delta = close.diff()
+    gain = delta.clip(lower=0).rolling(window).mean()
+    loss = (-delta.clip(upper=0)).rolling(window).mean()
+    rs = gain / loss.replace(0, np.nan)
+    return 100 - (100 / (1 + rs))
+
+
+def _add_indicator_stop_features(market: pd.DataFrame) -> pd.DataFrame:
+    result = market.sort_values("trade_date").copy()
+    close = pd.to_numeric(result["close"], errors="coerce")
+    high = pd.to_numeric(result["high"], errors="coerce")
+    low = pd.to_numeric(result["low"], errors="coerce")
+
+    result["rsi6"] = _rsi(close, 6)
+    result["rsi_turn_down"] = (result["rsi6"] < result["rsi6"].shift(1)).astype(int)
+    result["rsi_overbought"] = (result["rsi6"] > 80).astype(int)
+
+    low_9 = low.rolling(9, min_periods=1).min()
+    high_9 = high.rolling(9, min_periods=1).max()
+    rsv = (close - low_9) / (high_9 - low_9).replace(0, np.nan) * 100
+    result["kdj_k"] = rsv.ewm(alpha=1 / 3, adjust=False).mean()
+    result["kdj_d"] = result["kdj_k"].ewm(alpha=1 / 3, adjust=False).mean()
+    result["kdj_j"] = 3 * result["kdj_k"] - 2 * result["kdj_d"]
+    result["kdj_k_minus_d"] = result["kdj_k"] - result["kdj_d"]
+    result["kdj_turn_down"] = (
+        (result["kdj_j"] < result["kdj_j"].shift(1))
+        & (result["kdj_k"] < result["kdj_k"].shift(1))
+    ).astype(int)
+    result["kdj_dead_cross"] = (
+        (result["kdj_k_minus_d"] < 0) & (result["kdj_k_minus_d"].shift(1) >= 0)
+    ).astype(int)
+
+    typical_price = (high + low + close) / 3
+    typical_mean = typical_price.rolling(14).mean()
+    mean_deviation = (typical_price - typical_mean).abs().rolling(14).mean()
+    result["cci14"] = typical_price.sub(typical_mean).div(0.015 * mean_deviation.replace(0, np.nan))
+    result["cci_turn_down_below_100"] = (
+        (result["cci14"] < 100) & (result["cci14"] < result["cci14"].shift(1))
+    ).astype(int)
+
+    return result
+
+
 def _load_market_close(target_index: str) -> pd.DataFrame:
     market = read_sql(
         """
-        SELECT trade_date, index_code, close
+        SELECT trade_date, index_code, open, high, low, close, volume, amount
         FROM market_index_daily
         WHERE index_code = :target_index
         ORDER BY trade_date
@@ -111,8 +167,10 @@ def _load_market_close(target_index: str) -> pd.DataFrame:
     if market.empty:
         raise RuntimeError(f"No market_index_daily rows found for {target_index}.")
     market["trade_date"] = pd.to_datetime(market["trade_date"])
-    market["close"] = pd.to_numeric(market["close"], errors="coerce")
-    return market.dropna(subset=["trade_date", "close"]).sort_values("trade_date").reset_index(drop=True)
+    for column in ["open", "high", "low", "close", "volume", "amount"]:
+        market[column] = pd.to_numeric(market[column], errors="coerce")
+    market = market.dropna(subset=["trade_date", "high", "low", "close"])
+    return _add_indicator_stop_features(market).sort_values("trade_date").reset_index(drop=True)
 
 
 def _load_predictions(model_kind: str, market: pd.DataFrame) -> pd.DataFrame:
@@ -135,7 +193,22 @@ def _load_predictions(model_kind: str, market: pd.DataFrame) -> pd.DataFrame:
     if missing:
         raise RuntimeError(f"{path} is missing columns: {missing}")
 
-    prediction = prediction.merge(market[["trade_date", "close"]], on="trade_date", how="left")
+    market_columns = [
+        "trade_date",
+        "close",
+        "cci14",
+        "cci_turn_down_below_100",
+        "kdj_k",
+        "kdj_d",
+        "kdj_j",
+        "kdj_k_minus_d",
+        "kdj_turn_down",
+        "kdj_dead_cross",
+        "rsi6",
+        "rsi_turn_down",
+        "rsi_overbought",
+    ]
+    prediction = prediction.merge(market[market_columns], on="trade_date", how="left")
     prediction["close"] = pd.to_numeric(prediction["close"], errors="coerce")
     prediction = prediction.dropna(subset=["close"]).sort_values("trade_date").reset_index(drop=True)
     prediction["bottom_signal"] = _bool_series(prediction["weak_combined_bottom_signal"])
@@ -268,6 +341,7 @@ def _exit_reason(
     trade_date: pd.Timestamp,
     close: float,
     top_signal: bool,
+    row,
     params: StrategyParams,
 ) -> str:
     if not lots:
@@ -284,6 +358,14 @@ def _exit_reason(
             return "take_profit"
         if holding_days >= params.max_holding_days:
             return "max_holding_days"
+
+    if strategy == "indicator_stop":
+        reasons = []
+        for column in INDICATOR_STOP_COLUMNS:
+            if bool(getattr(row, column, 0)):
+                reasons.append(column)
+        if reasons:
+            return "indicator_stop:" + "|".join(reasons)
 
     if top_signal:
         return "top_signal"
@@ -309,6 +391,12 @@ def _simulate_strategy(
         "risk_stop_loss_exits": 0,
         "risk_take_profit_exits": 0,
         "risk_max_holding_exits": 0,
+        "indicator_stop_exits": 0,
+        "indicator_cci_turn_down_below_100_exits": 0,
+        "indicator_kdj_turn_down_exits": 0,
+        "indicator_rsi_turn_down_exits": 0,
+        "indicator_kdj_dead_cross_exits": 0,
+        "indicator_rsi_overbought_exits": 0,
     }
 
     for row in prediction.itertuples(index=False):
@@ -342,7 +430,7 @@ def _simulate_strategy(
         elif top_signal and not lots:
             diagnostics["ignored_top_while_flat"] += 1
 
-        reason = "" if opened_today else _exit_reason(strategy, lots, trade_date, close, top_signal, params)
+        reason = "" if opened_today else _exit_reason(strategy, lots, trade_date, close, top_signal, row, params)
         if reason:
             _, shares, _ = _position_values(lots)
             cash += shares * close
@@ -367,6 +455,11 @@ def _simulate_strategy(
                 diagnostics["risk_take_profit_exits"] += 1
             elif reason == "max_holding_days":
                 diagnostics["risk_max_holding_exits"] += 1
+            elif reason.startswith("indicator_stop:"):
+                diagnostics["indicator_stop_exits"] += 1
+                for column in INDICATOR_STOP_COLUMNS:
+                    if column in reason:
+                        diagnostics[f"indicator_{column}_exits"] += 1
             lots = []
             cycle_start_equity = cash
 
@@ -386,6 +479,11 @@ def _simulate_strategy(
                 "capital_exposure": position_value / equity if equity else 0.0,
                 "bottom_signal": int(bottom_signal),
                 "top_signal": int(top_signal),
+                "cci_turn_down_below_100": int(getattr(row, "cci_turn_down_below_100", 0)),
+                "kdj_turn_down": int(getattr(row, "kdj_turn_down", 0)),
+                "rsi_turn_down": int(getattr(row, "rsi_turn_down", 0)),
+                "kdj_dead_cross": int(getattr(row, "kdj_dead_cross", 0)),
+                "rsi_overbought": int(getattr(row, "rsi_overbought", 0)),
             }
         )
 
@@ -460,6 +558,12 @@ def _summarize_model(
         "risk_stop_loss_exits": diagnostics["risk_stop_loss_exits"],
         "risk_take_profit_exits": diagnostics["risk_take_profit_exits"],
         "risk_max_holding_exits": diagnostics["risk_max_holding_exits"],
+        "indicator_stop_exits": diagnostics["indicator_stop_exits"],
+        "indicator_cci_turn_down_below_100_exits": diagnostics["indicator_cci_turn_down_below_100_exits"],
+        "indicator_kdj_turn_down_exits": diagnostics["indicator_kdj_turn_down_exits"],
+        "indicator_rsi_turn_down_exits": diagnostics["indicator_rsi_turn_down_exits"],
+        "indicator_kdj_dead_cross_exits": diagnostics["indicator_kdj_dead_cross_exits"],
+        "indicator_rsi_overbought_exits": diagnostics["indicator_rsi_overbought_exits"],
     }
     if not open_trades.empty:
         summary["open_entry_date"] = str(open_trades.iloc[-1]["entry_date"])
