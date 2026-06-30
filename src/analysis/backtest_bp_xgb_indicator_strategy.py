@@ -9,6 +9,7 @@ import pandas as pd
 
 from src.common.config import load_yaml, project_path
 from src.common.db import read_sql
+from src.features.technical_indicators import cci, kdj, rsi_cn
 
 
 BP_PREDICTION_PATH = "data/reports/manual_weak_turning_walk_forward_predictions_bp_wf.csv"
@@ -45,17 +46,16 @@ class Lot:
     reason: str
 
 
+def _output_path(path_value: str, tag: str | None) -> Path:
+    path = project_path(path_value)
+    if not tag:
+        return path
+    return path.with_name(f"{path.stem}_{tag}{path.suffix}")
+
+
 def _load_target_index() -> str:
     cfg = load_yaml(project_path("config", "bottom_model.yaml"))
     return str(cfg.get("model", {}).get("target_index", "000852"))
-
-
-def _rsi(close: pd.Series, window: int) -> pd.Series:
-    delta = close.diff()
-    gain = delta.clip(lower=0).rolling(window).mean()
-    loss = (-delta.clip(upper=0)).rolling(window).mean()
-    rs = gain / loss.replace(0, np.nan)
-    return 100 - (100 / (1 + rs))
 
 
 def _load_market(target_index: str, start_date: str) -> pd.DataFrame:
@@ -84,17 +84,15 @@ def _add_indicator_features(market: pd.DataFrame) -> pd.DataFrame:
     high = result["high"]
     low = result["low"]
 
-    result["rsi6"] = _rsi(close, 6)
+    result["rsi6"] = rsi_cn(close, 6)
     result["rsi_turn_down"] = (result["rsi6"] < result["rsi6"].shift(1)).astype(int)
     result["rsi_overbought"] = (result["rsi6"] > 80).astype(int)
 
-    low_9 = low.rolling(9, min_periods=1).min()
-    high_9 = high.rolling(9, min_periods=1).max()
-    rsv = (close - low_9) / (high_9 - low_9).replace(0, np.nan) * 100
-    result["kdj_k"] = rsv.ewm(alpha=1 / 3, adjust=False).mean()
-    result["kdj_d"] = result["kdj_k"].ewm(alpha=1 / 3, adjust=False).mean()
-    result["kdj_j"] = 3 * result["kdj_k"] - 2 * result["kdj_d"]
-    result["kdj_k_minus_d"] = result["kdj_k"] - result["kdj_d"]
+    kdj_frame = kdj(high, low, close)
+    result["kdj_k"] = kdj_frame["kdj_k"]
+    result["kdj_d"] = kdj_frame["kdj_d"]
+    result["kdj_j"] = kdj_frame["kdj_j"]
+    result["kdj_k_minus_d"] = kdj_frame["kdj_k_minus_d"]
     result["kdj_turn_down"] = (
         (result["kdj_j"] < result["kdj_j"].shift(1))
         & (result["kdj_k"] < result["kdj_k"].shift(1))
@@ -103,10 +101,7 @@ def _add_indicator_features(market: pd.DataFrame) -> pd.DataFrame:
         (result["kdj_k_minus_d"] < 0) & (result["kdj_k_minus_d"].shift(1) >= 0)
     ).astype(int)
 
-    typical_price = (high + low + close) / 3
-    typical_mean = typical_price.rolling(14).mean()
-    mean_deviation = (typical_price - typical_mean).abs().rolling(14).mean()
-    result["cci14"] = (typical_price - typical_mean) / (0.015 * mean_deviation.replace(0, np.nan))
+    result["cci14"] = cci(high, low, close, window=14)
     result["cci_turn_down_below_100"] = (
         (result["cci14"] < 100) & (result["cci14"] < result["cci14"].shift(1))
     ).astype(int)
@@ -405,11 +400,50 @@ def run_backtest(data: pd.DataFrame, params: StrategyParams) -> tuple[pd.DataFra
     return summary_df, trades_df, equity_df
 
 
-def write_outputs(summary: pd.DataFrame, trades: pd.DataFrame, equity: pd.DataFrame) -> None:
-    project_path(SUMMARY_OUTPUT).parent.mkdir(parents=True, exist_ok=True)
-    summary.to_csv(project_path(SUMMARY_OUTPUT), index=False, encoding="utf-8-sig")
-    trades.to_csv(project_path(TRADES_OUTPUT), index=False, encoding="utf-8-sig")
-    equity.to_csv(project_path(EQUITY_OUTPUT), index=False, encoding="utf-8-sig")
+def write_outputs(
+    summary: pd.DataFrame,
+    trades: pd.DataFrame,
+    equity: pd.DataFrame,
+    tag: str | None = None,
+) -> tuple[Path, Path, Path]:
+    summary_path = _output_path(SUMMARY_OUTPUT, tag)
+    trades_path = _output_path(TRADES_OUTPUT, tag)
+    equity_path = _output_path(EQUITY_OUTPUT, tag)
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary.to_csv(summary_path, index=False, encoding="utf-8-sig")
+    trades.to_csv(trades_path, index=False, encoding="utf-8-sig")
+    equity.to_csv(equity_path, index=False, encoding="utf-8-sig")
+    return summary_path, trades_path, equity_path
+
+
+def _run_one_case(data: pd.DataFrame, params: StrategyParams, tag: str) -> pd.DataFrame:
+    summary, trades, equity = run_backtest(data, params)
+    write_outputs(summary, trades, equity, tag)
+    summary = summary.copy()
+    summary["case"] = tag
+    return summary
+
+
+def run_default_cases(start_date: str = "2022-01-01") -> pd.DataFrame:
+    data = _load_backtest_frame(start_date)
+    cases = [
+        ("all_no_cost", StrategyParams()),
+        ("exclude_no_cost", StrategyParams(exclude_start="2023-12-01", exclude_end="2024-01-31")),
+        ("all_cost", StrategyParams(fee_rate=0.0003, slippage_rate=0.0005)),
+        (
+            "exclude_cost",
+            StrategyParams(
+                fee_rate=0.0003,
+                slippage_rate=0.0005,
+                exclude_start="2023-12-01",
+                exclude_end="2024-01-31",
+            ),
+        ),
+    ]
+    compare = pd.concat([_run_one_case(data, params, tag) for tag, params in cases], ignore_index=True)
+    compare_path = project_path("data/reports/bp_xgb_indicator_strategy_summary_compare.csv")
+    compare.to_csv(compare_path, index=False, encoding="utf-8-sig")
+    return compare
 
 
 def main() -> None:
@@ -428,7 +462,15 @@ def main() -> None:
     parser.add_argument("--slippage-rate", type=float, default=0.0)
     parser.add_argument("--exclude-start")
     parser.add_argument("--exclude-end")
+    parser.add_argument("--output-tag")
+    parser.add_argument("--run-default-cases", action="store_true")
     args = parser.parse_args()
+
+    if args.run_default_cases:
+        compare = run_default_cases(args.start_date)
+        pd.set_option("display.max_columns", None)
+        print(compare.to_string(index=False))
+        return
 
     params = StrategyParams(
         first_entry_pct=args.first_entry_pct,
@@ -447,7 +489,7 @@ def main() -> None:
     )
     data = _load_backtest_frame(args.start_date)
     summary, trades, equity = run_backtest(data, params)
-    write_outputs(summary, trades, equity)
+    write_outputs(summary, trades, equity, args.output_tag)
     pd.set_option("display.max_columns", None)
     print("[summary]")
     print(summary.to_string(index=False))

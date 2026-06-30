@@ -11,6 +11,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import average_precision_score, roc_auc_score
 from sklearn.model_selection import ParameterGrid
 from sklearn.pipeline import Pipeline
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 
 from src.common.config import get_config, project_path
@@ -55,23 +56,84 @@ def _normalize_model_kind(model_kind: str) -> str:
         return "xgboost"
     if normalized in {"bpnn", "bp_neural_network", "neural_network", "mlp"}:
         return "bp"
+    if normalized in {"rf", "randomforest", "random-forest", "random_forest"}:
+        return "random_forest"
     return normalized
 
 
-def _manual_labels() -> pd.DataFrame:
+FIXED_2025_PARAMS: dict[str, dict[str, dict]] = {
+    "bp": {
+        "bottom": {
+            "batch_size": 128,
+            "dropout": 0.10,
+            "hidden_layers": (64, 32),
+            "learning_rate": 0.001,
+            "max_epochs": 100,
+            "patience": 10,
+            "weight_decay": 0.001,
+        },
+        "top": {
+            "batch_size": 128,
+            "dropout": 0.0,
+            "hidden_layers": (32,),
+            "learning_rate": 0.001,
+            "max_epochs": 100,
+            "patience": 10,
+            "weight_decay": 0.001,
+        },
+    },
+    "xgboost": {
+        "bottom": {
+            "colsample_bytree": 0.85,
+            "learning_rate": 0.04,
+            "max_depth": 2,
+            "min_child_weight": 8,
+            "n_estimators": 600,
+            "reg_alpha": 0.0,
+            "reg_lambda": 1.0,
+            "subsample": 0.8,
+        },
+        "top": {
+            "colsample_bytree": 0.65,
+            "learning_rate": 0.04,
+            "max_depth": 4,
+            "min_child_weight": 3,
+            "n_estimators": 600,
+            "reg_alpha": 0.0,
+            "reg_lambda": 5.0,
+            "subsample": 0.8,
+        },
+    },
+}
+
+
+def _default_params(model_kind: str, side: str) -> dict:
+    params = FIXED_2025_PARAMS.get(model_kind, {}).get(side, {})
+    return dict(params)
+
+
+def _manual_labels(target_index: str | None = None) -> pd.DataFrame:
     cfg = get_config("bottom_model.yaml")
     table = str(cfg["outputs"]["manual_daily_table"])
     labels = read_sql(f"SELECT * FROM `{table}` ORDER BY trade_date")
     if labels.empty:
         raise RuntimeError("manual_turning_region_daily is empty. Run build_manual_turning_labels first.")
     labels["trade_date"] = pd.to_datetime(labels["trade_date"])
+    if target_index:
+        labels = labels[labels["index_code"].astype(str) == str(target_index)].copy()
+        if labels.empty:
+            raise RuntimeError(f"manual_turning_region_daily has no rows for index_code={target_index}.")
     return labels
 
 
-def load_manual_model_frame() -> pd.DataFrame:
+def load_manual_model_frame(target_index: str | None = None) -> pd.DataFrame:
     assert_bottom_database()
     features = load_bottom_dataset()
-    manual = _manual_labels()
+    if target_index:
+        features = features[features["index_code"].astype(str) == str(target_index)].copy()
+        if features.empty:
+            raise RuntimeError(f"bottom_model_dataset_daily has no rows for index_code={target_index}.")
+    manual = _manual_labels(target_index)
     data = features.merge(
         manual.drop(columns=["id", "created_at", "updated_at"], errors="ignore"),
         on=["trade_date", "index_code"],
@@ -220,6 +282,28 @@ def _make_pipeline(
                 ),
             ]
         )
+    elif model_kind == "random_forest":
+        pipeline = Pipeline(
+            [
+                ("imputer", SimpleImputer(strategy="median")),
+                (
+                    "model",
+                    RandomForestClassifier(
+                        n_estimators=int(params.get("n_estimators", 500)),
+                        max_depth=None
+                        if params.get("max_depth", None) in {None, "none", "None"}
+                        else int(params.get("max_depth")),
+                        min_samples_leaf=int(params.get("min_samples_leaf", 5)),
+                        min_samples_split=int(params.get("min_samples_split", 10)),
+                        max_features=params.get("max_features", "sqrt"),
+                        bootstrap=bool(params.get("bootstrap", True)),
+                        class_weight="balanced_subsample",
+                        random_state=random_state,
+                        n_jobs=-1,
+                    ),
+                ),
+            ]
+        )
     else:
         raise ValueError(f"Unsupported model kind: {model_kind}")
     return pipeline
@@ -279,6 +363,19 @@ def _candidate_params(model_kind: str) -> list[dict]:
                 }
             )
         )
+    if model_kind == "random_forest":
+        return list(
+            ParameterGrid(
+                {
+                    "n_estimators": [300],
+                    "max_depth": [4, 6, None],
+                    "min_samples_leaf": [3, 8],
+                    "min_samples_split": [10],
+                    "max_features": ["sqrt", 0.5],
+                    "bootstrap": [True],
+                }
+            )
+        )
     raise ValueError(f"Unsupported model kind: {model_kind}")
 
 
@@ -330,12 +427,13 @@ def _select_hyperparams(
     side: str,
     tune: bool,
 ) -> dict:
-    default_params = {}
+    default_params = _default_params(model_kind, side)
     if not tune:
         return {
             "params": default_params,
             "tuning_enabled": False,
             "candidate_count": 1,
+            "param_source": "fixed_2025_walk_forward_fold" if default_params else "library_default",
             "inner_valid_start": "",
             "inner_valid_end": "",
             "inner_valid_average_precision": None,
@@ -348,6 +446,7 @@ def _select_hyperparams(
             "params": default_params,
             "tuning_enabled": True,
             "candidate_count": 0,
+            "param_source": "fixed_2025_walk_forward_fold" if default_params else "library_default",
             "inner_valid_start": "",
             "inner_valid_end": "",
             "inner_valid_average_precision": None,
@@ -386,6 +485,9 @@ def _select_hyperparams(
         "params": best_params or default_params,
         "tuning_enabled": True,
         "candidate_count": len(candidates),
+        "param_source": "inner_validation" if best_params else (
+            "fixed_2025_walk_forward_fold" if default_params else "library_default"
+        ),
         "inner_valid_start": valid["trade_date"].min().strftime("%Y-%m-%d"),
         "inner_valid_end": valid["trade_date"].max().strftime("%Y-%m-%d"),
         "inner_valid_average_precision": None if best_ap == -np.inf else float(best_ap),
@@ -398,14 +500,16 @@ def _positive_probability(model: Pipeline, data: pd.DataFrame, features: list[st
     return model.predict_proba(data[features])[:, classes.index(1)]
 
 
-def _kind_path(path_value: str, model_kind: str) -> str:
+def _kind_path(path_value: str, model_kind: str, output_tag: str | None = None) -> str:
     path = project_path(path_value)
-    return str(path.with_name(f"{path.stem}_{model_kind}{path.suffix}"))
+    tag = f"_{output_tag}" if output_tag else ""
+    return str(path.with_name(f"{path.stem}{tag}_{model_kind}{path.suffix}"))
 
 
-def _wf_kind_path(path_value: str, model_kind: str) -> str:
+def _wf_kind_path(path_value: str, model_kind: str, output_tag: str | None = None) -> str:
     path = project_path(path_value)
-    return str(path.with_name(f"{path.stem}_{model_kind}_wf{path.suffix}"))
+    tag = f"_{output_tag}" if output_tag else ""
+    return str(path.with_name(f"{path.stem}{tag}_{model_kind}_wf{path.suffix}"))
 
 
 def _split_name(data: pd.DataFrame) -> pd.Series:
@@ -491,6 +595,7 @@ def _tuning_metric_fields(tuning_info: dict) -> dict:
     return {
         "tuning_enabled": bool(tuning_info.get("tuning_enabled", False)),
         "candidate_count": int(tuning_info.get("candidate_count", 0) or 0),
+        "param_source": tuning_info.get("param_source", ""),
         "best_params": json.dumps(tuning_info.get("params", {}), ensure_ascii=False, sort_keys=True),
         "inner_valid_start": tuning_info.get("inner_valid_start", ""),
         "inner_valid_end": tuning_info.get("inner_valid_end", ""),
@@ -502,11 +607,13 @@ def _tuning_metric_fields(tuning_info: dict) -> dict:
 def train_manual_turning_models(
     model_kind: str = "logistic",
     tune: bool = False,
+    target_index: str | None = None,
+    output_tag: str | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     model_kind = _normalize_model_kind(model_kind)
     cfg = get_config("bottom_model.yaml")
     manual_cfg = cfg["manual_models"]
-    data = load_manual_model_frame()
+    data = load_manual_model_frame(target_index)
     data["manual_split"] = _split_name(data)
     features = load_bottom_features(data)
     random_state = int(cfg["model"]["random_state"])
@@ -548,7 +655,7 @@ def train_manual_turning_models(
             "sample_weight_metadata": "cycle_label_freq",
             "tuning": tuning_info,
         }
-        path = project_path(_kind_path(model_file, model_kind))
+        path = project_path(_kind_path(model_file, model_kind, output_tag))
         path.parent.mkdir(parents=True, exist_ok=True)
         joblib.dump(bundle, path)
 
@@ -620,7 +727,7 @@ def train_manual_turning_models(
         (prediction, "manual_model_predictions"),
         (combined, "manual_combined_signals"),
     ]:
-        path = project_path(_kind_path(str(cfg["outputs"][key]), model_kind))
+        path = project_path(_kind_path(str(cfg["outputs"][key]), model_kind, output_tag))
         path.parent.mkdir(parents=True, exist_ok=True)
         frame.to_csv(path, index=False, encoding="utf-8-sig")
     return metrics, prediction, combined
@@ -663,11 +770,13 @@ def walk_forward_manual_turning_models(
     model_kind: str = "logistic",
     start_year: int = 2022,
     tune: bool = False,
+    target_index: str | None = None,
+    output_tag: str | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     model_kind = _normalize_model_kind(model_kind)
     cfg = get_config("bottom_model.yaml")
     manual_cfg = cfg["manual_models"]
-    data = load_manual_model_frame()
+    data = load_manual_model_frame(target_index)
     features = load_bottom_features(data)
     random_state = int(cfg["model"]["random_state"])
     train_start = pd.Timestamp(str(manual_cfg["train_start"]))
@@ -752,7 +861,7 @@ def walk_forward_manual_turning_models(
         (prediction, "manual_walk_forward_predictions"),
         (combined, "manual_walk_forward_combined"),
     ]:
-        path = project_path(_wf_kind_path(str(cfg["outputs"][key]), model_kind))
+        path = project_path(_wf_kind_path(str(cfg["outputs"][key]), model_kind, output_tag))
         path.parent.mkdir(parents=True, exist_ok=True)
         frame.to_csv(path, index=False, encoding="utf-8-sig")
     return metrics, prediction, combined
@@ -762,18 +871,44 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Train independent manual bottom/top zone models.")
     parser.add_argument(
         "--model-kind",
-        choices=["logistic", "lightgbm", "xgboost", "xboost", "bp", "bpnn", "mlp", "neural_network"],
+        choices=[
+            "logistic",
+            "lightgbm",
+            "xgboost",
+            "xboost",
+            "bp",
+            "bpnn",
+            "mlp",
+            "neural_network",
+            "random_forest",
+            "randomforest",
+            "random-forest",
+            "rf",
+        ],
         default="logistic",
     )
     parser.add_argument("--walk-forward", action="store_true")
     parser.add_argument("--start-year", type=int, default=2022)
     parser.add_argument("--tune", action="store_true")
+    parser.add_argument("--target-index")
+    parser.add_argument("--output-tag")
     args = parser.parse_args()
     model_kind = _normalize_model_kind(args.model_kind)
     if args.walk_forward:
-        metrics, _, combined = walk_forward_manual_turning_models(model_kind, args.start_year, tune=args.tune)
+        metrics, _, combined = walk_forward_manual_turning_models(
+            model_kind,
+            args.start_year,
+            tune=args.tune,
+            target_index=args.target_index,
+            output_tag=args.output_tag,
+        )
     else:
-        metrics, _, combined = train_manual_turning_models(model_kind, tune=args.tune)
+        metrics, _, combined = train_manual_turning_models(
+            model_kind,
+            tune=args.tune,
+            target_index=args.target_index,
+            output_tag=args.output_tag,
+        )
     print(metrics.to_string(index=False))
     print("\n[combined]")
     print(combined.to_string(index=False))

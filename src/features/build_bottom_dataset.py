@@ -9,6 +9,7 @@ import pandas as pd
 from src.common.config import get_config
 from src.common.db import execute_sql, get_database_name, read_sql, upsert_dataframe
 from src.common.logger import get_logger
+from src.features.technical_indicators import atr, boll, cci, kdj, macd, rsi_cn, wr
 from src.modeling.bottom_data import assert_bottom_database
 
 
@@ -20,31 +21,6 @@ def _consecutive_days(mask: pd.Series) -> pd.Series:
     groups = values.ne(values.shift(fill_value=False)).cumsum()
     days = values.groupby(groups).cumcount() + 1
     return days.where(values, 0).astype(float)
-
-
-def _rsi(close: pd.Series, window: int) -> pd.Series:
-    delta = close.diff()
-    gain = delta.clip(lower=0).rolling(window).mean()
-    loss = (-delta.clip(upper=0)).rolling(window).mean()
-    rs = gain / loss.replace(0, np.nan)
-    return 100 - 100 / (1 + rs)
-
-
-def _weekly_kdj(high: np.ndarray, low: np.ndarray, close: np.ndarray) -> tuple[float, float, float, float]:
-    k_value = 50.0
-    d_value = 50.0
-    previous_diff = 0.0
-    for idx in range(len(close)):
-        start = max(0, idx - 8)
-        lowest = float(np.min(low[start : idx + 1]))
-        highest = float(np.max(high[start : idx + 1]))
-        rsv = 50.0 if highest == lowest else (float(close[idx]) - lowest) / (highest - lowest) * 100
-        k_value = 2 / 3 * k_value + 1 / 3 * rsv
-        d_value = 2 / 3 * d_value + 1 / 3 * k_value
-        if idx == len(close) - 2:
-            previous_diff = k_value - d_value
-    j_value = 3 * k_value - 2 * d_value
-    return k_value, d_value, j_value, previous_diff
 
 
 def build_causal_weekly_features(target: pd.DataFrame) -> pd.DataFrame:
@@ -90,12 +66,17 @@ def build_causal_weekly_features(target: pd.DataFrame) -> pd.DataFrame:
         def return_n(window: int) -> float:
             return float(closes[-1] / closes[-window - 1] - 1) if len(closes) > window else np.nan
 
-        ma20 = float(closes[-20:].mean()) if len(closes) >= 20 else np.nan
-        std20 = float(closes[-20:].std(ddof=1)) if len(closes) >= 20 else np.nan
-        boll_lower = ma20 - 2 * std20 if np.isfinite(ma20) and np.isfinite(std20) else np.nan
-        boll_upper = ma20 + 2 * std20 if np.isfinite(ma20) and np.isfinite(std20) else np.nan
+        weekly_frame = pd.DataFrame({"high": highs, "low": lows, "close": closes})
+        weekly_boll = boll(weekly_frame["close"], window=20, multiplier=2.0, ddof=0)
+        weekly_kdj = kdj(weekly_frame["high"], weekly_frame["low"], weekly_frame["close"])
+        ma20 = float(weekly_boll["boll_mid"].iloc[-1])
+        boll_lower = float(weekly_boll["boll_lower"].iloc[-1])
+        boll_upper = float(weekly_boll["boll_upper"].iloc[-1])
         boll_range = boll_upper - boll_lower if np.isfinite(boll_lower) else np.nan
-        k_value, d_value, j_value, previous_kdj_diff = _weekly_kdj(highs, lows, closes)
+        k_value = float(weekly_kdj["kdj_k"].iloc[-1])
+        d_value = float(weekly_kdj["kdj_d"].iloc[-1])
+        j_value = float(weekly_kdj["kdj_j"].iloc[-1])
+        previous_kdj_diff = float(weekly_kdj["kdj_k_minus_d"].iloc[-2]) if len(weekly_kdj) >= 2 else np.nan
         kdj_diff = k_value - d_value
 
         prior_uptrend = 0.0
@@ -137,7 +118,8 @@ def build_causal_weekly_features(target: pd.DataFrame) -> pd.DataFrame:
             np.isfinite(return_n(1)) and return_n(1) < 0
             and np.isfinite(volume_pace_ratio) and volume_pace_ratio >= 1.2
         )
-        long_lower_shadow = float(week_range > 0 and lower_shadow / week_range >= 0.45)
+        week_lower_shadow_ratio = lower_shadow / week_range if week_range > 0 else np.nan
+        long_lower_shadow = float(np.isfinite(week_lower_shadow_ratio) and week_lower_shadow_ratio >= 0.45)
 
         rows.append(
             {
@@ -148,7 +130,7 @@ def build_causal_weekly_features(target: pd.DataFrame) -> pd.DataFrame:
                 "week_ret_4w": return_n(4),
                 "week_range": week_range / current["close"],
                 "week_body_return": current["close"] / current["open"] - 1,
-                "week_lower_shadow_ratio": lower_shadow / week_range if week_range > 0 else 0.0,
+                "week_lower_shadow_ratio": week_lower_shadow_ratio,
                 "week_drawdown_13w": closes[-1] / highs[-13:].max() - 1 if len(highs) >= 13 else np.nan,
                 "week_drawdown_26w": closes[-1] / highs[-26:].max() - 1 if len(highs) >= 26 else np.nan,
                 "week_ma5_gap": gap(5),
@@ -226,7 +208,7 @@ def build_bottom_feature_frame(target: pd.DataFrame, all_indices: pd.DataFrame, 
     out["downside_ret_3d"] = ret_1d.clip(upper=0).rolling(3).sum()
     out["downside_ret_5d"] = ret_1d.clip(upper=0).rolling(5).sum()
     for window in [20, 60, 120]:
-        out[f"drawdown_{window}d"] = close / close.rolling(window).max() - 1
+        out[f"drawdown_{window}d"] = close / high.rolling(window).max() - 1
     for window in [5, 10, 20]:
         out[f"distance_low_{window}d"] = close / low.rolling(window).min() - 1
 
@@ -238,48 +220,35 @@ def build_bottom_feature_frame(target: pd.DataFrame, all_indices: pd.DataFrame, 
     out["below_ma20_days"] = _consecutive_days(close < moving_averages[20])
     out["below_ma60_days"] = _consecutive_days(close < moving_averages[60])
 
-    out["rsi6"] = _rsi(close, 6)
-    out["rsi14"] = _rsi(close, 14)
-    high_14 = high.rolling(14).max()
-    low_14 = low.rolling(14).min()
-    out["wr14"] = (high_14 - close) / (high_14 - low_14).replace(0, np.nan) * -100
-    typical_price = (high + low + close) / 3
-    typical_mean = typical_price.rolling(14).mean()
-    mean_deviation = (typical_price - typical_mean).abs().rolling(14).mean()
-    out["cci14"] = (typical_price - typical_mean) / (0.015 * mean_deviation.replace(0, np.nan))
+    out["rsi6"] = rsi_cn(close, 6)
+    out["rsi14"] = rsi_cn(close, 14)
+    out["wr14"] = wr(high, low, close, window=14, sign="negative")
+    out["cci14"] = cci(high, low, close, window=14)
 
-    boll_mid = moving_averages[20]
-    boll_std = close.rolling(20).std()
-    boll_upper = boll_mid + 2 * boll_std
-    boll_lower = boll_mid - 2 * boll_std
-    out["boll_width"] = (boll_upper - boll_lower) / boll_mid
-    out["boll_position"] = (close - boll_lower) / (boll_upper - boll_lower).replace(0, np.nan)
+    boll_frame = boll(close, window=20, multiplier=2.0, ddof=0)
+    boll_lower = boll_frame["boll_lower"]
+    out["boll_width"] = boll_frame["boll_width"]
+    out["boll_position"] = boll_frame["boll_position"]
     out["boll_lower_break"] = (close < boll_lower).astype(float)
 
-    ema12 = close.ewm(span=12, adjust=False).mean()
-    ema26 = close.ewm(span=26, adjust=False).mean()
-    out["macd"] = ema12 - ema26
-    out["macd_signal"] = out["macd"].ewm(span=9, adjust=False).mean()
-    out["macd_hist"] = out["macd"] - out["macd_signal"]
+    macd_frame = macd(close)
+    out["macd"] = macd_frame["macd_dif"]
+    out["macd_signal"] = macd_frame["macd_dea"]
+    out["macd_hist"] = macd_frame["macd_hist"]
     out["macd_hist_delta_1d"] = out["macd_hist"].diff()
     out["macd_hist_delta_3d"] = out["macd_hist"].diff(3)
 
-    low_9 = low.rolling(9, min_periods=1).min()
-    high_9 = high.rolling(9, min_periods=1).max()
-    rsv = (close - low_9) / (high_9 - low_9).replace(0, np.nan) * 100
-    out["kdj_k"] = rsv.ewm(alpha=1 / 3, adjust=False).mean()
-    out["kdj_d"] = out["kdj_k"].ewm(alpha=1 / 3, adjust=False).mean()
-    out["kdj_j"] = 3 * out["kdj_k"] - 2 * out["kdj_d"]
-    out["kdj_k_minus_d"] = out["kdj_k"] - out["kdj_d"]
+    kdj_frame = kdj(high, low, close)
+    out["kdj_k"] = kdj_frame["kdj_k"]
+    out["kdj_d"] = kdj_frame["kdj_d"]
+    out["kdj_j"] = kdj_frame["kdj_j"]
+    out["kdj_k_minus_d"] = kdj_frame["kdj_k_minus_d"]
     out["kdj_golden_cross"] = (
         (out["kdj_k_minus_d"] > 0) & (out["kdj_k_minus_d"].shift(1) <= 0)
     ).astype(float)
 
     previous_close = close.shift(1)
-    true_range = pd.concat(
-        [(high - low), (high - previous_close).abs(), (low - previous_close).abs()], axis=1
-    ).max(axis=1)
-    out["atr14"] = true_range.rolling(14).mean() / close
+    out["atr14"] = atr(high, low, close, window=14, normalize=True)
     for window in [5, 10, 20]:
         out[f"volatility_{window}d"] = ret_1d.rolling(window).std()
     out["volatility_expand"] = out["volatility_5d"] / out["volatility_20d"].replace(0, np.nan)
@@ -445,10 +414,10 @@ def _ensure_table(table: str) -> None:
             execute_sql(f"ALTER TABLE `{table}` ADD COLUMN `{column}` DECIMAL(12,8) NULL")
 
 
-def build_bottom_dataset() -> int:
+def build_bottom_dataset(target_index: str | None = None) -> int:
     assert_bottom_database()
     cfg = _load_bottom_config()
-    target_index = str(cfg["model"]["target_index"])
+    target_index = str(target_index or cfg["model"]["target_index"])
     target, all_indices = _market_frame(target_index)
     feature_frame = build_bottom_feature_frame(target, all_indices, cfg)
     data = add_bottom_labels(feature_frame, target, cfg)
@@ -492,8 +461,10 @@ def build_bottom_dataset() -> int:
 
 
 def main() -> None:
-    argparse.ArgumentParser(description="Build the isolated bottom-fishing research dataset.").parse_args()
-    print(build_bottom_dataset())
+    parser = argparse.ArgumentParser(description="Build the isolated bottom-fishing research dataset.")
+    parser.add_argument("--target-index")
+    args = parser.parse_args()
+    print(build_bottom_dataset(target_index=args.target_index))
 
 
 if __name__ == "__main__":

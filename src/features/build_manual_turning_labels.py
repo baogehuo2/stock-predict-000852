@@ -131,10 +131,13 @@ def _join_ordered(values: list[str]) -> str:
     return "|".join(seen)
 
 
-def build_manual_turning_daily(path: str | Path | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+def build_manual_turning_daily(
+    path: str | Path | None = None,
+    target_index: str | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     assert_bottom_database()
     cfg = get_config("bottom_model.yaml")
-    target_index = str(cfg["model"]["target_index"])
+    target_index = str(target_index or cfg["model"]["target_index"])
     regions = load_manual_regions(path)
     daily = _trade_dates(target_index)
     daily["is_manual_bottom_region"] = 0
@@ -351,15 +354,27 @@ def _summary(regions: pd.DataFrame, daily: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def build_manual_turning_labels(path: str | Path | None = None, write_database: bool = True) -> pd.DataFrame:
+def _tagged_report_path(path_value: str, output_tag: str | None) -> Path:
+    path = project_path(path_value)
+    if not output_tag:
+        return path
+    return path.with_name(f"{path.stem}_{output_tag}{path.suffix}")
+
+
+def build_manual_turning_labels(
+    path: str | Path | None = None,
+    write_database: bool = True,
+    target_index: str | None = None,
+    output_tag: str | None = None,
+) -> pd.DataFrame:
     cfg = get_config("bottom_model.yaml")
-    regions, daily = build_manual_turning_daily(path)
+    regions, daily = build_manual_turning_daily(path, target_index=target_index)
     table = str(cfg["outputs"]["manual_daily_table"])
     if write_database:
         _ensure_table(table)
         upsert_dataframe(daily, table, ["trade_date", "index_code"])
     report = _summary(regions, daily)
-    report_path = project_path(str(cfg["outputs"]["manual_region_report"]))
+    report_path = _tagged_report_path(str(cfg["outputs"]["manual_region_report"]), output_tag)
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report.to_csv(report_path, index=False, encoding="utf-8-sig")
     logger.info("built manual turning labels rows=%s table=%s", len(daily), table)
@@ -369,9 +384,16 @@ def build_manual_turning_labels(path: str | Path | None = None, write_database: 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Validate and expand manual bottom/top regions to daily labels.")
     parser.add_argument("--path")
+    parser.add_argument("--target-index")
+    parser.add_argument("--output-tag")
     parser.add_argument("--no-database", action="store_true")
     args = parser.parse_args()
-    report = build_manual_turning_labels(args.path, write_database=not args.no_database)
+    report = build_manual_turning_labels(
+        args.path,
+        write_database=not args.no_database,
+        target_index=args.target_index,
+        output_tag=args.output_tag,
+    )
     print(report.to_string(index=False))
 
 

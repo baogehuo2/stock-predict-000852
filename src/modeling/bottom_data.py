@@ -80,7 +80,8 @@ def _augment_with_buy_v1_features(data: pd.DataFrame) -> pd.DataFrame:
     if not bool(cfg.get("feature_augments", {}).get("use_buy_v1_features", True)):
         return data
 
-    target_index = str(cfg["model"]["target_index"])
+    index_codes = data["index_code"].dropna().astype(str).unique().tolist() if "index_code" in data else []
+    target_index = index_codes[0] if len(index_codes) == 1 else str(cfg["model"]["target_index"])
     buy = _json_feature_frame("model_dataset_daily", target_index)
     if buy.empty:
         return data

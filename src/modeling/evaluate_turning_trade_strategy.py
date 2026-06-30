@@ -8,6 +8,7 @@ import pandas as pd
 
 from src.common.config import load_yaml, project_path
 from src.common.db import read_sql
+from src.features.technical_indicators import cci, kdj, rsi_cn
 
 
 PREDICTION_TEMPLATE = "data/reports/manual_weak_turning_walk_forward_predictions_{model_kind}_wf.csv"
@@ -16,7 +17,7 @@ YEARLY_OUTPUT = "data/reports/manual_weak_turning_trade_strategy_yearly.csv"
 TRADE_OUTPUT = "data/reports/manual_weak_turning_trade_strategy_trades.csv"
 EQUITY_OUTPUT = "data/reports/manual_weak_turning_trade_strategy_equity.csv"
 
-DEFAULT_MODELS = ["lightgbm", "logistic", "xgboost", "bp"]
+DEFAULT_MODELS = ["lightgbm", "logistic", "xgboost", "bp", "random_forest"]
 DEFAULT_STRATEGIES = ["scale_in", "risk_exit", "compressed_regions", "indicator_stop"]
 
 TRADE_COLUMNS = [
@@ -77,6 +78,8 @@ def _normalize_model_kind(model_kind: str) -> str:
         return "xgboost"
     if normalized in {"bpnn", "bp_neural_network", "neural_network", "mlp"}:
         return "bp"
+    if normalized in {"rf", "randomforest", "random-forest", "random_forest"}:
+        return "random_forest"
     return normalized
 
 
@@ -110,12 +113,18 @@ def _load_target_index() -> str:
     return str(cfg.get("model", {}).get("target_index", "000852"))
 
 
-def _rsi(close: pd.Series, window: int) -> pd.Series:
-    delta = close.diff()
-    gain = delta.clip(lower=0).rolling(window).mean()
-    loss = (-delta.clip(upper=0)).rolling(window).mean()
-    rs = gain / loss.replace(0, np.nan)
-    return 100 - (100 / (1 + rs))
+def _tagged_prediction_path(model_kind: str, output_tag: str | None = None):
+    path = project_path(PREDICTION_TEMPLATE.format(model_kind=model_kind))
+    if not output_tag:
+        return path
+    return path.with_name(f"manual_weak_turning_walk_forward_predictions_{output_tag}_{model_kind}_wf.csv")
+
+
+def _tagged_output_path(path_value: str, output_tag: str | None = None):
+    path = project_path(path_value)
+    if not output_tag:
+        return path
+    return path.with_name(f"{path.stem}_{output_tag}{path.suffix}")
 
 
 def _add_indicator_stop_features(market: pd.DataFrame) -> pd.DataFrame:
@@ -124,17 +133,15 @@ def _add_indicator_stop_features(market: pd.DataFrame) -> pd.DataFrame:
     high = pd.to_numeric(result["high"], errors="coerce")
     low = pd.to_numeric(result["low"], errors="coerce")
 
-    result["rsi6"] = _rsi(close, 6)
+    result["rsi6"] = rsi_cn(close, 6)
     result["rsi_turn_down"] = (result["rsi6"] < result["rsi6"].shift(1)).astype(int)
     result["rsi_overbought"] = (result["rsi6"] > 80).astype(int)
 
-    low_9 = low.rolling(9, min_periods=1).min()
-    high_9 = high.rolling(9, min_periods=1).max()
-    rsv = (close - low_9) / (high_9 - low_9).replace(0, np.nan) * 100
-    result["kdj_k"] = rsv.ewm(alpha=1 / 3, adjust=False).mean()
-    result["kdj_d"] = result["kdj_k"].ewm(alpha=1 / 3, adjust=False).mean()
-    result["kdj_j"] = 3 * result["kdj_k"] - 2 * result["kdj_d"]
-    result["kdj_k_minus_d"] = result["kdj_k"] - result["kdj_d"]
+    kdj_frame = kdj(high, low, close)
+    result["kdj_k"] = kdj_frame["kdj_k"]
+    result["kdj_d"] = kdj_frame["kdj_d"]
+    result["kdj_j"] = kdj_frame["kdj_j"]
+    result["kdj_k_minus_d"] = kdj_frame["kdj_k_minus_d"]
     result["kdj_turn_down"] = (
         (result["kdj_j"] < result["kdj_j"].shift(1))
         & (result["kdj_k"] < result["kdj_k"].shift(1))
@@ -143,10 +150,7 @@ def _add_indicator_stop_features(market: pd.DataFrame) -> pd.DataFrame:
         (result["kdj_k_minus_d"] < 0) & (result["kdj_k_minus_d"].shift(1) >= 0)
     ).astype(int)
 
-    typical_price = (high + low + close) / 3
-    typical_mean = typical_price.rolling(14).mean()
-    mean_deviation = (typical_price - typical_mean).abs().rolling(14).mean()
-    result["cci14"] = typical_price.sub(typical_mean).div(0.015 * mean_deviation.replace(0, np.nan))
+    result["cci14"] = cci(high, low, close, window=14)
     result["cci_turn_down_below_100"] = (
         (result["cci14"] < 100) & (result["cci14"] < result["cci14"].shift(1))
     ).astype(int)
@@ -173,9 +177,9 @@ def _load_market_close(target_index: str) -> pd.DataFrame:
     return _add_indicator_stop_features(market).sort_values("trade_date").reset_index(drop=True)
 
 
-def _load_predictions(model_kind: str, market: pd.DataFrame) -> pd.DataFrame:
+def _load_predictions(model_kind: str, market: pd.DataFrame, output_tag: str | None = None) -> pd.DataFrame:
     model_kind = _normalize_model_kind(model_kind)
-    path = project_path(PREDICTION_TEMPLATE.format(model_kind=model_kind))
+    path = _tagged_prediction_path(model_kind, output_tag)
     if not path.exists():
         raise FileNotFoundError(f"Prediction file not found: {path}")
 
@@ -620,9 +624,10 @@ def evaluate_model(
     market: pd.DataFrame,
     strategies: list[str],
     params: StrategyParams,
+    output_tag: str | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, list[dict]]:
     model_kind = _normalize_model_kind(model_kind)
-    base_prediction = _load_predictions(model_kind, market)
+    base_prediction = _load_predictions(model_kind, market, output_tag=output_tag)
     trade_parts = []
     equity_parts = []
     summaries = []
@@ -644,8 +649,10 @@ def evaluate(
     models: list[str],
     strategies: list[str],
     params: StrategyParams,
+    target_index: str | None = None,
+    output_tag: str | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    target_index = _load_target_index()
+    target_index = str(target_index or _load_target_index())
     market = _load_market_close(target_index)
     normalized_strategies = [_normalize_strategy(strategy) for strategy in strategies]
 
@@ -658,6 +665,7 @@ def evaluate(
             market,
             normalized_strategies,
             params,
+            output_tag=output_tag,
         )
         all_trades.append(trades)
         all_equity.append(equity)
@@ -668,11 +676,11 @@ def evaluate(
     summary_df = pd.DataFrame(summaries)
     yearly_df = _summarize_yearly(trades_df)
 
-    project_path(SUMMARY_OUTPUT).parent.mkdir(parents=True, exist_ok=True)
-    summary_df.to_csv(project_path(SUMMARY_OUTPUT), index=False, encoding="utf-8-sig")
-    yearly_df.to_csv(project_path(YEARLY_OUTPUT), index=False, encoding="utf-8-sig")
-    trades_df.to_csv(project_path(TRADE_OUTPUT), index=False, encoding="utf-8-sig")
-    equity_df.to_csv(project_path(EQUITY_OUTPUT), index=False, encoding="utf-8-sig")
+    _tagged_output_path(SUMMARY_OUTPUT, output_tag).parent.mkdir(parents=True, exist_ok=True)
+    summary_df.to_csv(_tagged_output_path(SUMMARY_OUTPUT, output_tag), index=False, encoding="utf-8-sig")
+    yearly_df.to_csv(_tagged_output_path(YEARLY_OUTPUT, output_tag), index=False, encoding="utf-8-sig")
+    trades_df.to_csv(_tagged_output_path(TRADE_OUTPUT, output_tag), index=False, encoding="utf-8-sig")
+    equity_df.to_csv(_tagged_output_path(EQUITY_OUTPUT, output_tag), index=False, encoding="utf-8-sig")
     return summary_df, yearly_df, trades_df, equity_df
 
 
@@ -685,6 +693,8 @@ def main() -> None:
     parser.add_argument("--take-profit", type=float, default=0.15)
     parser.add_argument("--max-holding-days", type=int, default=60)
     parser.add_argument("--region-gap-days", type=int, default=10)
+    parser.add_argument("--target-index")
+    parser.add_argument("--output-tag")
     args = parser.parse_args()
 
     params = StrategyParams(
@@ -694,7 +704,13 @@ def main() -> None:
         max_holding_days=args.max_holding_days,
         region_gap_days=args.region_gap_days,
     )
-    summary, yearly, trades, _ = evaluate(args.models, args.strategies, params)
+    summary, yearly, trades, _ = evaluate(
+        args.models,
+        args.strategies,
+        params,
+        target_index=args.target_index,
+        output_tag=args.output_tag,
+    )
     pd.set_option("display.max_columns", None)
     print("[summary]")
     print(summary.to_string(index=False))
