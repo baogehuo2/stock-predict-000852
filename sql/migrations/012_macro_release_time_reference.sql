@@ -1,0 +1,22 @@
+CREATE TABLE IF NOT EXISTS macro_release_time_reference_raw (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    indicator_key VARCHAR(100) NOT NULL,
+    indicator_name VARCHAR(160) NOT NULL,
+    country_region VARCHAR(30) NOT NULL,
+    period_date DATE NOT NULL,
+    release_time DATETIME NOT NULL,
+    event_name VARCHAR(240) NOT NULL,
+    source_type VARCHAR(40) NOT NULL,
+    source_name VARCHAR(100) NOT NULL,
+    is_official TINYINT NOT NULL DEFAULT 0,
+    confidence VARCHAR(30) NOT NULL,
+    available_time DATETIME NOT NULL,
+    data_source VARCHAR(100) NOT NULL,
+    source_url TEXT,
+    crawl_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    raw_hash CHAR(64),
+    note TEXT,
+    UNIQUE KEY uk_macro_release_time_ref (indicator_key, period_date, release_time, source_name),
+    KEY idx_macro_release_time_ref_time (release_time),
+    KEY idx_macro_release_time_ref_indicator (indicator_key, period_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

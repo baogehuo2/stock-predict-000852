@@ -1,0 +1,579 @@
+style_indices:
+  official_reference: https://www.csindex.com.cn/
+  underlying_source: 东方财富公开行情接口，由AKShare适配；官方指数网站用于名称、代码和抽样值核对
+  units:
+    price: 指数点
+    pct_chg: 来源百分数，标准化入库时转换为小数
+    volume: 来源单位待逐接口核验
+    amount: 来源单位待逐接口核验
+  probes:
+    - name: 中证2000
+      function: stock_zh_index_hist_csindex
+      parameters:
+        symbol: "932000"
+        start_date: "20250102"
+        end_date: "20250110"
+    - name: 上证50
+      function: stock_zh_index_hist_csindex
+      parameters:
+        symbol: "000016"
+        start_date: "20250102"
+        end_date: "20250110"
+    - name: 中证全指
+      function: stock_zh_index_hist_csindex
+      parameters:
+        symbol: "000985"
+        start_date: "20250102"
+        end_date: "20250110"
+    - name: 国证2000
+      function: index_hist_cni
+      official_reference: http://www.cnindex.com.cn/module/index-detail.html?act_menu=1&indexCode=399303
+      underlying_source: 国证指数官网历史行情接口，由AKShare适配
+      units:
+        price: 指数点
+        pct_chg: 小数
+        volume: 万手，标准化入库时乘1000000转换为股
+        amount: 亿元，标准化入库时乘100000000转换为元
+      parameters:
+        symbol: "399303"
+        start_date: "20250102"
+        end_date: "20250110"
+
+stock_daily:
+  official_reference: https://www.sse.com.cn/|https://www.szse.cn/|https://www.bse.cn/
+  underlying_source: 新浪未复权日线为主源，东方财富未复权日线为退市及异常代码回退源，均由AKShare适配；交易所官方名单、上市日期和每日市场汇总用于抽样核对
+  units:
+    price: 元/股
+    pct_chg: 来源百分数，标准化入库时转换为小数
+    volume: 股，若来源为手则入库前乘100并记录核验结果
+    amount: 元
+    turnover_rate: 来源百分数，标准化入库时转换为小数
+  probes:
+    - name: 上交所主板A股列表
+      function: stock_info_sh_name_code
+      parameters:
+        symbol: 主板A股
+    - name: 上交所科创板列表
+      function: stock_info_sh_name_code
+      parameters:
+        symbol: 科创板
+    - name: 深交所A股列表
+      function: stock_info_sz_name_code
+      parameters:
+        symbol: A股列表
+    - name: 北交所股票列表
+      function: local:fetch_bse_stock_list
+      official_reference: https://www.bseinfo.net/nq/listedcompany.html
+      underlying_source: 优先AKShare北交所官方接口；主站WAF失败时使用北交所官方信息域名同结构接口
+      parameters: {}
+    - name: A股不复权历史样本
+      function: stock_zh_a_daily
+      underlying_source: 新浪财经不复权日线，由AKShare适配；东方财富主接口不可用时的降级源
+      units:
+        price: 元/股
+        volume: 股
+        amount: 元
+        turnover: 小数
+      parameters:
+        symbol: sz000001
+        start_date: "20250101"
+        end_date: "20250110"
+        adjust: ""
+
+margin_market:
+  official_reference: https://www.sse.com.cn/market/othersdata/margin/sum/|https://www.szse.cn/
+  underlying_source: 上海证券交易所和深圳证券交易所公开数据，由AKShare适配
+  units:
+    amount: 元
+    volume: 股或份
+  probes:
+    - name: 上交所融资融券汇总
+      function: stock_margin_sse
+      parameters:
+        start_date: "20250102"
+        end_date: "20250110"
+    - name: 深交所融资融券汇总
+      function: stock_margin_szse
+      parameters:
+        date: "20250110"
+    - name: 深交所融资融券批量历史回退
+      function: macro_china_market_margin_sz
+      official_reference: https://www.szse.cn/disclosure/margin/margin/index.html
+      underlying_source: 金十公开历史汇总，由AKShare适配；仅补历史日期，深交所官方逐日数据优先且用于抽样核对
+      units:
+        amount: 元
+        volume: 股
+      parameters: {}
+    - name: 东方财富深市融资融券完整历史回退
+      function: local:fetch_margin_szse_eastmoney_history
+      official_reference: https://www.szse.cn/disclosure/margin/margin/index.html
+      underlying_source: 东方财富公开数据中心深市分市场历史汇总；仅在深交所官方逐日接口受限时回补，官方数据优先
+      units:
+        amount: 元
+        volume: 股
+      parameters:
+        start_date: "20250102"
+        end_date: "20250110"
+
+etf_fund:
+  official_reference: https://www.sse.com.cn/|https://www.szse.cn/
+  underlying_source: 上交所、深交所及东方财富基金公开数据，由AKShare适配
+  units:
+    fund_share: 份
+    nav: 元/份
+  probes:
+    - name: 上交所ETF份额
+      function: fund_etf_scale_sse
+      parameters:
+        date: "20250110"
+    - name: 深交所ETF份额
+      function: fund_scale_daily_szse
+      parameters:
+        start_date: "20250102"
+        end_date: "20250110"
+        symbol: ETF
+    - name: 深交所ETF份额官方HTTP备援
+      function: local:fetch_szse_etf_shares_http
+      official_reference: https://www.szse.cn/market/fund/volume/etf/index.html
+      underlying_source: 深交所官方ShowReport XLSX；仅在HTTPS被远端关闭时使用HTTP官方域名
+      parameters:
+        start_date: "2025-01-02"
+        end_date: "2025-01-10"
+        selected_codes:
+          - "159845"
+          - "159915"
+    - name: ETF净值
+      function: local:fetch_etf_nav_history
+      parameters:
+        code: "159845"
+        fund_name: 中证1000ETF华夏
+        start_date: "2025-01-01"
+        end_date: "2025-01-10"
+
+index_futures_contract:
+  official_reference: https://www.cffex.com.cn/cn/lssjxz.html
+  underlying_source: 中国金融期货交易所历史日行情，由AKShare适配
+  units:
+    price: 指数点
+    volume: 手
+    open_interest: 手
+    amount: 元（中金所原始成交金额为万元，入库乘10000）
+  probes:
+    - name: 中金所真实合约日行情
+      function: get_futures_daily
+      parameters:
+        start_date: "20250110"
+        end_date: "20250110"
+        market: CFFEX
+
+zz1000_constituent_snapshot:
+  official_reference: https://www.csindex.com.cn/
+  underlying_source: 中证指数有限公司当前成分及权重文件，由AKShare适配
+  units:
+    weight: 来源百分数，标准化入库时转换为小数
+  probes:
+    - name: 中证1000当前成分
+      function: index_stock_cons_csindex
+      parameters:
+        symbol: "000852"
+    - name: 中证1000当前权重
+      function: index_stock_cons_weight_csindex
+      parameters:
+        symbol: "000852"
+
+calendar_daily:
+  market: CN_STOCK
+  trade_calendar:
+    function: tushare:trade_cal
+    source_url: https://tushare.pro/document/2?doc_id=26
+    exchange: SSE
+    note: 只用于统一A股交易日历，不区分上交所和深交所。
+  holidays:
+    function: holiday-cn
+    source_url_template: https://raw.githubusercontent.com/NateScarlet/holiday-cn/master/{year}.json
+    note: 作为中国法定节假日结构化主源，不做国务院公告抽样核对。
+
+event_calendar:
+  central_bank_meetings:
+    - key: FOMC
+      country_region: US
+      source: federal_reserve
+      source_url: https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm
+      scope: 只采FOMC会议、决议、纪要，不采Fed其他日历事项。
+    - key: ECB_MPC
+      country_region: EU
+      source: ecb
+      source_url: https://www.ecb.europa.eu/press/calendars/mgcgc/html/index.en.html
+      scope: 只采monetary policy meeting。
+    - key: BOJ_MPM
+      country_region: JP
+      source: boj
+      source_url: https://www.boj.or.jp/en/mopo/mpmsche_minu/index.htm
+      scope: 采日本央行Monetary Policy Meetings，官方HTML解析。
+
+macro_release:
+  cn_source: tushare
+  us_source: akshare
+  forecast_source_policy: 第三方经济日历只允许补forecast，不作为actual权威源。
+  release_time_reference:
+    source: akshare:macro_info_ws
+    source_url: https://wallstreetcn.com/calendar
+    source_type: economic_calendar
+    is_official: 0
+    confidence: calendar_scheduled
+    future_days: 30
+    note: 先用结构化经济日历校验准确发布时间；官方发布日历后续接入同一参考表，不能用估算时间替代已确认发布时间。
+  forecast_calendar:
+    source: akshare:macro_info_ws
+    source_url: https://wallstreetcn.com/calendar
+    future_days: 30
+    event_mappings:
+      - key: CN_CPI_YOY
+        country_region: CN
+        include:
+          - 中国
+          - CPI
+          - 同比
+        exclude:
+          - PPI
+      - key: CN_PPI_YOY
+        country_region: CN
+        include:
+          - 中国
+          - PPI
+          - 同比
+      - key: CN_GDP_YOY
+        country_region: CN
+        include:
+          - 中国
+          - GDP
+          - 同比
+      - key: CN_PMI_MANUFACTURING
+        country_region: CN
+        include:
+          - 中国
+          - 制造业PMI
+      - key: CN_RETAIL_SALES_AMOUNT
+        country_region: CN
+        include:
+          - 中国
+          - 社会消费品零售总额
+      - key: CN_INDUSTRIAL_PRODUCTION_YOY
+        country_region: CN
+        include:
+          - 中国
+          - 规模以上工业增加值
+          - 同比
+      - key: CN_SOCIAL_FINANCING_INCREMENT
+        country_region: CN
+        include:
+          - 中国
+          - 社会融资规模
+      - key: CN_RMB_LOAN_INCREMENT
+        country_region: CN
+        include:
+          - 中国
+          - 人民币贷款
+      - key: US_CPI_MOM
+        country_region: US
+        include:
+          - 美国
+          - CPI
+          - 环比
+      - key: US_PPI
+        country_region: US
+        include:
+          - 美国
+          - PPI
+      - key: US_UNEMPLOYMENT_RATE
+        country_region: US
+        include:
+          - 美国
+          - 失业率
+      - key: US_NON_FARM
+        country_region: US
+        include:
+          - 美国
+          - 非农
+      - key: US_RETAIL_SALES
+        country_region: US
+        include:
+          - 美国
+          - 零售销售
+      - key: US_INDUSTRIAL_PRODUCTION
+        country_region: US
+        include:
+          - 美国
+          - 工业产出
+      - key: US_ISM_PMI
+        country_region: US
+        include:
+          - 美国
+          - ISM
+          - PMI
+      - key: US_GDP
+        country_region: US
+        include:
+          - 美国
+          - GDP
+  cn_indicators:
+    - key: CN_CPI_YOY
+      name: 中国CPI同比
+      api_name: cn_cpi
+      period_field: month
+      value_field: nt_yoy
+      frequency: monthly
+      unit: percent
+      source_url: https://tushare.pro/
+    - key: CN_PPI_YOY
+      name: 中国PPI同比
+      api_name: cn_ppi
+      period_field: month
+      value_field: ppi_yoy
+      frequency: monthly
+      unit: percent
+      source_url: https://tushare.pro/
+    - key: CN_GDP_YOY
+      name: 中国GDP同比
+      api_name: cn_gdp
+      period_field: quarter
+      value_field: gdp_yoy
+      frequency: quarterly
+      unit: percent
+      source_url: https://tushare.pro/
+    - key: CN_M1_BALANCE
+      name: 中国M1余额
+      api_name: cn_m
+      period_field: month
+      value_field: m1
+      frequency: monthly
+      unit: 100M_CNY
+      source_url: https://tushare.pro/
+    - key: CN_M2_BALANCE
+      name: 中国M2余额
+      api_name: cn_m
+      period_field: month
+      value_field: m2
+      frequency: monthly
+      unit: 100M_CNY
+      source_url: https://tushare.pro/
+    - key: CN_SOCIAL_FINANCING_INCREMENT
+      name: 中国社会融资规模增量
+      api_name: sf_month
+      period_field: month
+      value_field: inc_month
+      frequency: monthly
+      unit: 100M_CNY
+      source_url: https://tushare.pro/
+    - key: CN_PMI_MANUFACTURING
+      name: 中国制造业PMI
+      api_name: cn_pmi
+      period_field: month
+      value_field: pmi010000
+      frequency: monthly
+      unit: index
+      source_url: https://tushare.pro/
+  cn_akshare_fallback_indicators:
+    - key: CN_RETAIL_SALES_AMOUNT
+      name: 中国社会消费品零售总额当月值
+      function: macro_china_consumer_goods_retail
+      period_field: 月份
+      value_field: 当月
+      date_role: period
+      frequency: monthly
+      unit: 100M_CNY
+    - key: CN_INDUSTRIAL_PRODUCTION_YOY
+      name: 中国规模以上工业增加值同比
+      function: macro_china_industrial_production_yoy
+      period_field: 日期
+      value_field: 今值
+      forecast_field: 预测值
+      previous_field: 前值
+      date_role: release
+      frequency: monthly
+      unit: percent
+    - key: CN_RMB_LOAN_INCREMENT
+      name: 中国人民币贷款新增当月值
+      function: macro_china_new_financial_credit
+      period_field: 月份
+      value_field: 当月
+      date_role: period
+      frequency: monthly
+      unit: 100M_CNY
+  us_indicators:
+    - key: US_CPI_MOM
+      name: 美国CPI环比
+      function: macro_usa_cpi_monthly
+      date_role: period
+      frequency: monthly
+      unit: percent
+    - key: US_PPI
+      name: 美国PPI
+      function: macro_usa_ppi
+      date_role: release
+      frequency: monthly
+      unit: percent
+    - key: US_UNEMPLOYMENT_RATE
+      name: 美国失业率
+      function: macro_usa_unemployment_rate
+      date_role: period
+      frequency: monthly
+      unit: percent
+    - key: US_NON_FARM
+      name: 美国非农就业
+      function: macro_usa_non_farm
+      date_role: release
+      frequency: monthly
+      unit: person
+    - key: US_RETAIL_SALES
+      name: 美国零售销售
+      function: macro_usa_retail_sales
+      date_role: release
+      frequency: monthly
+      unit: percent
+    - key: US_INDUSTRIAL_PRODUCTION
+      name: 美国工业产出
+      function: macro_usa_industrial_production
+      date_role: release
+      frequency: monthly
+      unit: percent
+    - key: US_ISM_PMI
+      name: 美国ISM制造业PMI
+      function: macro_usa_ism_pmi
+      date_role: release
+      frequency: monthly
+      unit: index
+    - key: US_GDP
+      name: 美国GDP
+      function: macro_usa_gdp_monthly
+      date_role: period
+      frequency: quarterly
+      unit: percent
+
+global_market:
+  fred_reference:
+    - symbol: DGS2
+      name: 美国2年期国债收益率
+      asset_class: bond_yield
+      currency: USD
+      series_id: DGS2
+    - symbol: DGS10
+      name: 美国10年期国债收益率
+      asset_class: bond_yield
+      currency: USD
+      series_id: DGS10
+    - symbol: DGS30
+      name: 美国30年期国债收益率
+      asset_class: bond_yield
+      currency: USD
+      series_id: DGS30
+    - symbol: VIXCLS
+      name: CBOE VIX
+      asset_class: volatility
+      currency: USD
+      series_id: VIXCLS
+    - symbol: DCOILWTICO
+      name: WTI原油现货
+      asset_class: commodity
+      currency: USD
+      series_id: DCOILWTICO
+  akshare_bond_yield:
+    - symbol: US10Y
+      name: 美国10年期国债收益率
+      asset_class: bond_yield
+      source_column: 美国国债收益率10年
+      currency: USD
+    - symbol: US2Y
+      name: 美国2年期国债收益率
+      asset_class: bond_yield
+      source_column: 美国国债收益率2年
+      currency: USD
+    - symbol: US30Y
+      name: 美国30年期国债收益率
+      asset_class: bond_yield
+      source_column: 美国国债收益率30年
+      currency: USD
+  akshare_global_futures:
+    - symbol: CL
+      name: NYMEX原油
+      asset_class: commodity
+      ak_symbol: CL
+      function: futures_foreign_hist
+      currency: USD
+    - symbol: GC
+      name: COMEX黄金
+      asset_class: commodity
+      ak_symbol: GC
+      function: futures_foreign_hist
+      currency: USD
+  akshare_us_index:
+    - symbol: SPX
+      name: S&P 500
+      asset_class: equity_index
+      ak_symbol: .INX
+      currency: USD
+    - symbol: NDX
+      name: Nasdaq 100
+      asset_class: equity_index
+      ak_symbol: .NDX
+      currency: USD
+  akshare_sox_index:
+    - symbol: SOX
+      name: Philadelphia Semiconductor Index
+      asset_class: equity_index
+      function: macro_global_sox_index
+      currency: USD
+  akshare_us_proxy:
+    - symbol: IWM
+      name: iShares Russell 2000 ETF
+      asset_class: equity_index
+      proxy_for: Russell 2000
+      ak_symbol: IWM
+      currency: USD
+    - symbol: UUP
+      name: Invesco DB US Dollar Index Bullish Fund
+      asset_class: currency_index
+      proxy_for: DXY
+      ak_symbol: UUP
+      currency: USD
+    - symbol: VXX
+      name: iPath Series B S&P 500 VIX Short-Term Futures ETN
+      asset_class: volatility
+      proxy_for: VIX
+      ak_symbol: VXX
+      currency: USD
+  yahoo_reference:
+    - symbol: RUT
+      name: Russell 2000
+      asset_class: equity_index
+      yahoo_symbol: ^RUT
+      currency: USD
+    - symbol: DXY
+      name: 美元指数
+      asset_class: currency_index
+      yahoo_symbol: DX-Y.NYB
+      currency: USD
+
+market_index_periodic:
+  source: tushare:index_weekly_monthly
+  source_url: https://tushare.pro/
+  fallback_source: eastmoney:index_kline|akshare:index_zh_a_hist
+  note: 2.5批多周期顶底模型补充数据；直接采集Tushare指数周K/月K，不使用日线重采样；东财周期K仅作备援。
+  indices:
+    - code: "000852"
+      name: 中证1000
+    - code: "000905"
+      name: 中证500
+    - code: "000300"
+      name: 沪深300
+    - code: "000001"
+      name: 上证指数
+    - code: "399006"
+      name: 创业板指
+    - code: "399001"
+      name: 深证成指
+  periods:
+    - period: weekly
+      table: market_index_weekly
+    - period: monthly
+      table: market_index_monthly
