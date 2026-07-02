@@ -147,6 +147,13 @@ def normalize_calendar(trade_cal: pd.DataFrame, holidays: pd.DataFrame, start_da
     return cal[columns]
 
 
+def _max_trade_calendar_date(trade_cal: pd.DataFrame) -> date:
+    trade_dates = pd.to_datetime(trade_cal.get("cal_date"), errors="coerce").dropna()
+    if trade_dates.empty:
+        raise RuntimeError("tushare trade_cal returned no valid cal_date values")
+    return trade_dates.max().date()
+
+
 def _existing_count(start_date: str, end_date: str) -> int:
     result = read_sql(
         """
@@ -183,6 +190,10 @@ def collect_calendar_daily(start_date: str | None = None, end_date: str | None =
     )
     try:
         trade_cal = fetch_tushare_trade_calendar(start_date, end_date)
+        requested_end_date = end_date
+        max_trade_cal_date = _max_trade_calendar_date(trade_cal)
+        if max_trade_cal_date < pd.Timestamp(end_date).date():
+            end_date = max_trade_cal_date.isoformat()
         holidays = fetch_holidays(start_date, end_date)
         frame = normalize_calendar(trade_cal, holidays, start_date, end_date)
         existing = _existing_count(start_date, end_date)
@@ -195,6 +206,8 @@ def collect_calendar_daily(start_date: str | None = None, end_date: str | None =
             "rows": len(frame),
             "start_date": start_date,
             "end_date": end_date,
+            "requested_end_date": requested_end_date,
+            "truncated_to_source_max_date": end_date != requested_end_date,
             "holiday_rows": int(frame["is_holiday"].sum()),
             "trading_rows": int(frame["is_trading_day"].sum()),
             "quality": _quality_report(frame),

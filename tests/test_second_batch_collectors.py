@@ -4,7 +4,7 @@ import unittest
 
 import pandas as pd
 
-from src.collectors.collect_calendar_daily_v2 import normalize_calendar
+from src.collectors.collect_calendar_daily_v2 import _max_trade_calendar_date, normalize_calendar
 from src.collectors.collect_event_calendar_v2 import extract_english_dates
 from src.collectors.collect_global_market_v2 import normalize_akshare_global_index
 from src.collectors.collect_macro_forecast_calendar_v2 import _infer_period_date, normalize_macro_forecast
@@ -27,6 +27,15 @@ class SecondBatchCollectorTests(unittest.TestCase):
         self.assertEqual(result.iloc[0]["is_exchange_closed"], 1)
         self.assertEqual(result.iloc[0]["holiday_name"], "元旦")
         self.assertEqual(result.iloc[1]["is_trading_day"], 1)
+
+    def test_max_trade_calendar_date_uses_available_source_tail(self) -> None:
+        trade = pd.DataFrame(
+            [
+                {"cal_date": "20261230", "is_open": 1, "pretrade_date": "20261229"},
+                {"cal_date": "20261231", "is_open": 1, "pretrade_date": "20261230"},
+            ]
+        )
+        self.assertEqual(str(_max_trade_calendar_date(trade)), "2026-12-31")
 
     def test_extract_english_dates_supports_ranges(self) -> None:
         text = "FOMC January 28-29, 2025 and 11 September 2025 meetings."
