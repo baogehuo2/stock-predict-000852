@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from urllib.parse import urljoin
 
 import pandas as pd
@@ -35,6 +35,7 @@ DEFAULT_AKSHARE_SYMBOLS = [
     "159915",
     "588000",
 ]
+DEFAULT_LOOKBACK_DAYS = 3
 
 
 def _news_id(source: str, url: str, title: str) -> str:
@@ -50,9 +51,21 @@ def _parse_publish_time(value: object) -> datetime | None:
     return parsed.to_pydatetime()
 
 
-def _default_window() -> tuple[datetime, datetime]:
-    now = datetime.now()
-    return datetime.combine(now.date(), time.min), now
+def _parse_time(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    return pd.Timestamp(value).to_pydatetime()
+
+
+def _collection_window(
+    *,
+    start_time: datetime | None = None,
+    end_time: datetime | None = None,
+    lookback_days: int = DEFAULT_LOOKBACK_DAYS,
+) -> tuple[datetime, datetime]:
+    window_end = end_time or datetime.now()
+    window_start = start_time or datetime.combine(window_end.date(), time.min) - timedelta(days=lookback_days)
+    return window_start, window_end
 
 
 def _akshare_symbols(cfg: dict) -> list[str]:
@@ -159,13 +172,21 @@ def parse_news_home(source: str, url: str, keyword_groups: dict[str, list[str]],
     return rows
 
 
-def collect_news() -> int:
+def collect_news(
+    start_time: datetime | None = None,
+    end_time: datetime | None = None,
+    lookback_days: int = DEFAULT_LOOKBACK_DAYS,
+) -> int:
     cfg = get_config()
     news_cfg = cfg.get("news", {})
     keyword_groups = _keyword_groups_from_config(cfg)
     max_items = int(news_cfg.get("max_items_per_source", 80))
     akshare_symbols = _akshare_symbols(cfg)
-    window_start, window_end = _default_window()
+    window_start, window_end = _collection_window(
+        start_time=start_time,
+        end_time=end_time,
+        lookback_days=int(news_cfg.get("lookback_days", lookback_days)),
+    )
     sources = load_yaml(project_path("config", "symbols.yaml"))["news_sources"]
     rows: list[dict] = []
     ensure_news_raw_columns()
@@ -191,8 +212,18 @@ def collect_news() -> int:
 
 
 def main() -> None:
-    argparse.ArgumentParser().parse_args()
-    print(collect_news())
+    parser = argparse.ArgumentParser(description="Collect news, preferring AKShare timestamped interfaces over homepage fallback.")
+    parser.add_argument("--start-time", help="Window start time, e.g. 2026-07-03 08:00:00.")
+    parser.add_argument("--end-time", help="Window end time. Defaults to now.")
+    parser.add_argument("--lookback-days", type=int, default=DEFAULT_LOOKBACK_DAYS, help="Look back N days from end-time if start-time is empty.")
+    args = parser.parse_args()
+    print(
+        collect_news(
+            start_time=_parse_time(args.start_time),
+            end_time=_parse_time(args.end_time),
+            lookback_days=args.lookback_days,
+        )
+    )
 
 
 if __name__ == "__main__":

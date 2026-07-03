@@ -5,7 +5,7 @@ from datetime import datetime
 
 import pandas as pd
 
-from src.collectors.collect_news import normalize_akshare_stock_news
+from src.collectors.collect_news import _collection_window, normalize_akshare_stock_news
 
 
 class NewsCollectorTests(unittest.TestCase):
@@ -20,26 +20,38 @@ class NewsCollectorTests(unittest.TestCase):
                     "新闻链接": "https://example.com/a",
                 },
                 {
-                    "新闻标题": "前一日新闻不应进入今日早盘窗口",
+                    "新闻标题": "前一晚新闻应该进入三天回看窗口",
                     "新闻内容": "中证1000ETF",
                     "发布时间": "2026-07-03 23:30:00",
                     "文章来源": "证券时报网",
                     "新闻链接": "https://example.com/b",
                 },
+                {
+                    "新闻标题": "过旧新闻不应进入三天回看窗口",
+                    "新闻内容": "中证1000ETF",
+                    "发布时间": "2026-06-30 23:30:00",
+                    "文章来源": "证券时报网",
+                    "新闻链接": "https://example.com/c",
+                },
             ]
+        )
+        window_start, window_end = _collection_window(
+            end_time=datetime(2026, 7, 4, 8, 0),
+            lookback_days=3,
         )
         result = normalize_akshare_stock_news(
             raw,
             "159845",
             {"liquidity": ["流动性"], "index_style": ["中证1000"]},
-            datetime(2026, 7, 4, 0, 0),
-            datetime(2026, 7, 4, 8, 0),
+            window_start,
+            window_end,
         )
 
-        self.assertEqual(len(result), 1)
+        self.assertEqual(len(result), 2)
         self.assertEqual(result[0]["publish_time"], datetime(2026, 7, 4, 7, 30))
         self.assertEqual(result[0]["trade_date"], datetime(2026, 7, 4, 7, 30).date())
         self.assertIn("AKShare东方财富个股新闻:159845", result[0]["source"])
+        self.assertEqual(result[1]["publish_time"], datetime(2026, 7, 3, 23, 30))
 
 
 if __name__ == "__main__":
