@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>中证1000顶底标注工具</title>
+  <link rel="stylesheet" href="/styles.css?v=20260629">
+  <script src="/vendor/echarts.min.js?v=5.5.1"></script>
+</head>
+<body>
+  <header class="toolbar">
+    <div class="brand" id="brandTitle">中证1000 顶底标注</div>
+    <div class="segmented" id="freqButtons">
+      <button data-freq="intraday">1H</button>
+      <button data-freq="daily" class="active">日K</button>
+      <button data-freq="weekly">周K</button>
+      <button data-freq="monthly">月K</button>
+    </div>
+    <label>主图
+      <select id="mainIndicator">
+        <option value="ma">MA</option>
+        <option value="boll">BOLL</option>
+        <option value="none">无</option>
+      </select>
+    </label>
+    <label id="bollParamWrap">BOLL
+      <select id="bollParam">
+        <option value="2">2.0</option>
+        <option value="3">3.0</option>
+      </select>
+    </label>
+    <label>副图
+      <select id="subIndicator">
+        <option value="macd">MACD</option>
+        <option value="kdj">KDJ</option>
+        <option value="rsi">RSI</option>
+        <option value="cci">CCI</option>
+        <option value="wr">WR</option>
+        <option value="atr">ATR</option>
+        <option value="none">无</option>
+      </select>
+    </label>
+    <label>开始
+      <input type="date" id="startDate">
+    </label>
+    <label>结束
+      <input type="date" id="endDate">
+    </label>
+    <button id="reloadBtn">刷新</button>
+    <button id="lineModeBtn">手动画线</button>
+    <button id="generateCandidatesBtn">生成候选</button>
+    <label><input type="checkbox" id="showCandidates" checked>候选</label>
+    <button id="exportBtn">导出CSV</button>
+    <span id="status"></span>
+  </header>
+
+  <main class="layout">
+    <section class="chartArea">
+      <div id="chart"></div>
+    </section>
+    <aside class="sidePanel">
+      <div id="listPane">
+        <div class="panelHeader">
+          <strong>正式标注</strong>
+          <button id="newBtn">手动新增</button>
+        </div>
+        <div class="filters">
+          <select id="filterType">
+            <option value="">全部类型</option>
+            <option value="bottom">底部</option>
+            <option value="top">顶部</option>
+          </select>
+          <select id="filterFreq">
+            <option value="">全部频率</option>
+            <option value="daily">日K</option>
+            <option value="weekly">周K</option>
+            <option value="monthly">月K</option>
+            <option value="intraday">小时K</option>
+          </select>
+        </div>
+        <div id="labelList" class="labelList"></div>
+        <div class="panelHeader compact">
+          <strong>候选顶底</strong>
+          <span id="candidateCount">0</span>
+        </div>
+        <div id="candidateList" class="labelList candidateList"></div>
+      </div>
+
+      <form id="labelForm" class="editPane">
+        <div class="dialogHeader">
+          <strong id="dialogTitle">新增标注</strong>
+          <button type="button" id="closeDialogBtn" class="iconButton">×</button>
+        </div>
+        <div class="formGrid">
+          <label>标注编号<input id="region_id" name="region_id" required></label>
+          <label>顶底类型
+            <select id="region_type" name="region_type">
+              <option value="bottom">底部</option>
+              <option value="top">顶部</option>
+            </select>
+          </label>
+          <label>区域开始<input type="date" id="form_start_date" name="start_date" required></label>
+          <label>区域结束<input type="date" id="form_end_date" name="end_date" required></label>
+          <label>预测周期
+            <select id="cycle" name="cycle">
+              <option value="short">短期</option>
+              <option value="medium">中期</option>
+              <option value="long">长期</option>
+              <option value="intraday">分时</option>
+            </select>
+          </label>
+          <label>观察频率
+            <select id="label_freq" name="label_freq">
+              <option value="daily">日K</option>
+              <option value="weekly">周K</option>
+              <option value="monthly">月K</option>
+              <option value="intraday">小时K</option>
+            </select>
+          </label>
+          <label>重要级别
+            <select id="level" name="level">
+              <option value="minor">小级别</option>
+              <option value="swing">波段级别</option>
+              <option value="major">大级别</option>
+            </select>
+          </label>
+          <label>置信度
+            <select id="confidence" name="confidence">
+              <option value="1">低 1</option>
+              <option value="2" selected>中 2</option>
+              <option value="3">高 3</option>
+            </select>
+          </label>
+          <label>用于训练
+            <select id="usable_for_signal" name="usable_for_signal">
+              <option value="1">是</option>
+              <option value="0">否</option>
+            </select>
+          </label>
+          <label class="bottomOnly">买入窗口开始<input type="date" id="entry_start" name="entry_start"></label>
+          <label class="bottomOnly">买入窗口结束<input type="date" id="entry_end" name="entry_end"></label>
+          <label class="topOnly">卖出窗口开始<input type="date" id="exit_start" name="exit_start"></label>
+          <label class="topOnly">卖出窗口结束<input type="date" id="exit_end" name="exit_end"></label>
+        </div>
+        <label class="full">标注原因
+          <select id="reasonPreset">
+            <option value="">添加原因</option>
+          </select>
+        </label>
+        <input id="reason" name="reason" placeholder="多个原因用 | 分隔，可手写">
+        <label class="full">备注<textarea id="notes" name="notes" rows="3"></textarea></label>
+        <div id="formHint" class="hint"></div>
+        <div class="dialogActions">
+          <button type="button" id="deleteBtn" class="danger">删除</button>
+          <div class="spacer"></div>
+          <button type="button" id="copyBtn">复制为新周期</button>
+          <button type="button" id="saveBtn" class="primary">保存</button>
+        </div>
+      </form>
+    </aside>
+  </main>
+
+  <script src="/app.js?v=20260629"></script>
+</body>
+</html>
