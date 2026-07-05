@@ -3,7 +3,7 @@ setlocal EnableExtensions
 
 cd /d "%~dp0.."
 
-set "LOOKBACK_DAYS=15"
+set "LOOKBACK_DAYS=60"
 if /I "%~1"=="--help" goto :help
 if not "%~1"=="" set "LOOKBACK_DAYS=%~1"
 echo(%LOOKBACK_DAYS%| findstr /r "^[1-9][0-9]*$" >nul
@@ -90,3 +90,5 @@ echo   scripts\run_buy_signal_daily.bat LOOKBACK_DAYS
 echo.
 echo Default LOOKBACK_DAYS is 15 calendar days.
 exit /b 0
+
+python .\main_daily_run.py --step report_buy_signal
