@@ -22,6 +22,8 @@ from src.llm.prompts import render_prompt
 
 logger = get_logger(__name__)
 
+DEFAULT_PRIORITY_GROUPS = ["policy_market", "liquidity", "index_style", "growth_industry"]
+
 
 def _json_list(value: object) -> list[str]:
     if value is None or pd.isna(value):
@@ -35,6 +37,17 @@ def _json_list(value: object) -> list[str]:
     if not isinstance(data, list):
         return []
     return [str(item) for item in data if str(item)]
+
+
+def _group_priority(groups: object, priority_groups: list[str] | None = None) -> int:
+    parsed = set(_json_list(groups))
+    priorities = priority_groups or DEFAULT_PRIORITY_GROUPS
+    for index, group in enumerate(priorities):
+        if group in parsed:
+            return len(priorities) - index
+    if parsed:
+        return 1
+    return 0
 
 
 def score_event(event: dict) -> float:
@@ -70,6 +83,7 @@ def _select_news_candidates(
     end_date: str | None = None,
     limit_per_day: int | None = None,
     include_unmatched: bool = True,
+    priority_groups: list[str] | None = None,
 ) -> pd.DataFrame:
     where = ["news_id NOT IN (SELECT source_ids FROM event_daily WHERE source_ids IS NOT NULL)"]
     params: dict[str, object] = {}
@@ -81,6 +95,13 @@ def _select_news_candidates(
         params["end_date"] = end_date
     if not include_unmatched:
         where.append("matched_groups IS NOT NULL AND matched_groups <> '[]'")
+    if priority_groups:
+        group_conditions = []
+        for index, group in enumerate(priority_groups):
+            key = f"priority_group_{index}"
+            group_conditions.append(f"matched_groups LIKE :{key}")
+            params[key] = f'%"{group}"%'
+        where.append("(" + " OR ".join(group_conditions) + ")")
 
     sql = (
         "SELECT id, news_id, trade_date, publish_time, title, content, matched_keywords, matched_groups "
@@ -98,10 +119,56 @@ def _select_news_candidates(
     if news.empty or not limit_per_day:
         return news
 
+    news = news.copy()
+    news["_event_group_priority"] = news["matched_groups"].map(
+        lambda value: _group_priority(value, priority_groups)
+    )
+    news = news.sort_values(
+        ["trade_date", "_event_group_priority", "publish_time", "id"],
+        ascending=[False, False, False, False],
+    )
     news = news.groupby("trade_date", group_keys=False, sort=False).head(limit_per_day)
+    news = news.drop(columns=["_event_group_priority"])
     if limit:
         news = news.head(limit)
     return news.reset_index(drop=True)
+
+
+def audit_missing_priority_news(
+    start_date: str,
+    end_date: str,
+    priority_groups: list[str] | None = None,
+    limit: int | None = None,
+) -> pd.DataFrame:
+    groups = priority_groups or DEFAULT_PRIORITY_GROUPS
+    group_conditions = []
+    params: dict[str, object] = {"start_date": start_date, "end_date": end_date}
+    for index, group in enumerate(groups):
+        key = f"group_{index}"
+        group_conditions.append(f"n.matched_groups LIKE :{key}")
+        params[key] = f'%"{group}"%'
+    sql = (
+        "SELECT n.trade_date,n.id,n.news_id,n.publish_time,n.source,n.title,"
+        "n.matched_groups,n.matched_keywords "
+        "FROM news_raw n "
+        "LEFT JOIN event_daily e ON n.news_id=e.source_ids "
+        "WHERE n.trade_date >= :start_date AND n.trade_date <= :end_date "
+        "AND e.source_ids IS NULL "
+        "AND (" + " OR ".join(group_conditions) + ") "
+        "ORDER BY n.trade_date DESC,n.id DESC"
+    )
+    if limit:
+        sql += " LIMIT :limit"
+        params["limit"] = limit
+    data = read_sql(sql, params)
+    if data.empty:
+        return data
+    data = data.copy()
+    data["priority"] = data["matched_groups"].map(lambda value: _group_priority(value, groups))
+    return data.sort_values(
+        ["trade_date", "priority", "publish_time", "id"],
+        ascending=[False, False, False, False],
+    ).reset_index(drop=True)
 
 
 def _flush_events(rows: list[dict]) -> int:
@@ -261,6 +328,7 @@ def extract_events_for_history(
     fail_fast: bool | None = None,
     llm_retries: int = 3,
     retry_wait: float = 10.0,
+    priority_groups: list[str] | None = None,
 ) -> int:
     cfg = get_config()
     if fail_fast is None:
@@ -271,14 +339,16 @@ def extract_events_for_history(
         end_date=end_date,
         limit_per_day=limit_per_day,
         include_unmatched=include_unmatched,
+        priority_groups=priority_groups,
     )
     logger.info(
-        "selected historical news for event extraction rows=%s start=%s end=%s limit_per_day=%s include_unmatched=%s",
+        "selected historical news for event extraction rows=%s start=%s end=%s limit_per_day=%s include_unmatched=%s priority_groups=%s",
         len(news),
         start_date,
         end_date,
         limit_per_day,
         include_unmatched,
+        priority_groups,
     )
     return _extract_events(
         news,
@@ -300,10 +370,36 @@ def main() -> None:
     parser.add_argument("--fail-fast", action="store_true", help="Stop immediately when one LLM extraction fails.")
     parser.add_argument("--llm-retries", type=int, default=3, help="Retry transient LLM/network errors before stopping.")
     parser.add_argument("--retry-wait", type=float, default=10.0, help="Seconds to wait between transient LLM retries.")
+    parser.add_argument(
+        "--priority-groups",
+        help="Comma-separated matched_groups to extract first or exclusively in history mode, e.g. policy_market,liquidity.",
+    )
+    parser.add_argument(
+        "--audit-missing-priority",
+        action="store_true",
+        help="Only print historical priority-group news that have no event_daily row.",
+    )
     args = parser.parse_args()
+    priority_groups = (
+        [item.strip() for item in args.priority_groups.split(",") if item.strip()]
+        if args.priority_groups
+        else None
+    )
     if args.start_date or args.end_date:
         if not args.start_date or not args.end_date:
             parser.error("--start-date and --end-date must be used together")
+        if args.audit_missing_priority:
+            audit = audit_missing_priority_news(
+                start_date=args.start_date,
+                end_date=args.end_date,
+                priority_groups=priority_groups,
+                limit=args.limit,
+            )
+            if audit.empty:
+                print("No missing priority news.")
+            else:
+                print(audit.to_string(index=False))
+            return
         print(
             extract_events_for_history(
                 start_date=args.start_date,
@@ -315,6 +411,7 @@ def main() -> None:
                 fail_fast=args.fail_fast,
                 llm_retries=args.llm_retries,
                 retry_wait=args.retry_wait,
+                priority_groups=priority_groups,
             )
         )
     else:
