@@ -8,6 +8,7 @@ import pandas as pd
 from src.common.config import get_config
 from src.common.db import execute_sql, get_database_name, read_sql, upsert_dataframe
 from src.common.logger import get_logger
+from src.features.technical_indicators import atr, boll, cci, kdj, macd, rsi_cn, wr
 
 
 logger = get_logger(__name__)
@@ -115,14 +116,6 @@ def _ensure_market_feature_columns(cols: list[str]) -> None:
             execute_sql(f"ALTER TABLE market_feature_daily ADD COLUMN `{col}` DECIMAL(12,6) NULL")
 
 
-def _rsi(close: pd.Series, window: int) -> pd.Series:
-    delta = close.diff()
-    gain = delta.clip(lower=0).rolling(window).mean()
-    loss = (-delta.clip(upper=0)).rolling(window).mean()
-    rs = gain / loss.replace(0, np.nan)
-    return 100 - (100 / (1 + rs))
-
-
 def _build_one(df: pd.DataFrame) -> pd.DataFrame:
     df = df.sort_values("trade_date").copy()
     open_ = pd.to_numeric(df["open"], errors="coerce")
@@ -141,11 +134,10 @@ def _build_one(df: pd.DataFrame) -> pd.DataFrame:
     ma20 = close.rolling(20).mean()
     ma60 = close.rolling(60).mean()
 
-    ema12 = close.ewm(span=12, adjust=False).mean()
-    ema26 = close.ewm(span=26, adjust=False).mean()
-    out["macd"] = ema12 - ema26
-    out["macd_signal"] = out["macd"].ewm(span=9, adjust=False).mean()
-    out["macd_hist"] = out["macd"] - out["macd_signal"]
+    macd_frame = macd(close)
+    out["macd"] = macd_frame["macd_dif"]
+    out["macd_signal"] = macd_frame["macd_dea"]
+    out["macd_hist"] = macd_frame["macd_hist"]
     macd_diff = out["macd"] - out["macd_signal"]
     out["macd_golden_cross"] = ((macd_diff > 0) & (macd_diff.shift(1) <= 0)).astype(int)
     out["macd_dead_cross"] = ((macd_diff < 0) & (macd_diff.shift(1) >= 0)).astype(int)
@@ -153,20 +145,19 @@ def _build_one(df: pd.DataFrame) -> pd.DataFrame:
     out["macd_dead_cross_days"] = _consecutive_days(macd_diff < 0)
     out["macd_hist_turn_positive"] = ((out["macd_hist"] > 0) & (out["macd_hist"].shift(1) <= 0)).astype(int)
     out["macd_hist_turn_negative"] = ((out["macd_hist"] < 0) & (out["macd_hist"].shift(1) >= 0)).astype(int)
-    out["rsi6"] = _rsi(close, 6)
-    out["rsi14"] = _rsi(close, 14)
+    out["rsi6"] = rsi_cn(close, 6)
+    out["rsi14"] = rsi_cn(close, 14)
 
     prev_close = close.shift(1)
-    tr = pd.concat([(high - low), (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
-    out["atr14"] = tr.rolling(14).mean() / close
-    mid = close.rolling(20).mean()
-    std = close.rolling(20).std()
-    boll_upper = mid + 2 * std
-    boll_lower = mid - 2 * std
-    out["boll_width"] = (4 * std) / mid
+    out["atr14"] = atr(high, low, close, 14, normalize=True)
+    boll_frame = boll(close, 20, 2, ddof=0)
+    mid = boll_frame["boll_mid"]
+    boll_upper = boll_frame["boll_upper"]
+    boll_lower = boll_frame["boll_lower"]
+    out["boll_width"] = boll_frame["boll_width"]
     out["boll_lower_break"] = (close < boll_lower).astype(int)
     out["boll_upper_break"] = (close > boll_upper).astype(int)
-    out["boll_band_position"] = (close - boll_lower) / (boll_upper - boll_lower).replace(0, np.nan)
+    out["boll_band_position"] = boll_frame["boll_band_position"]
     out["amount_zscore_20d"] = (amount - amount.rolling(20).mean()) / amount.rolling(20).std()
     out["volume_zscore_20d"] = (volume - volume.rolling(20).mean()) / volume.rolling(20).std()
     out["volatility_10d"] = close.pct_change().rolling(10).std()
@@ -194,13 +185,11 @@ def _build_one(df: pd.DataFrame) -> pd.DataFrame:
     out["gap_down"] = (open_ < prev_close * 0.995).astype(int)
     out["large_range_day"] = (out["intraday_range"] > out["intraday_range"].rolling(60).quantile(0.8)).astype(int)
 
-    low_9 = low.rolling(9, min_periods=1).min()
-    high_9 = high.rolling(9, min_periods=1).max()
-    rsv = (close - low_9) / (high_9 - low_9).replace(0, np.nan) * 100
-    out["kdj_k"] = rsv.ewm(alpha=1 / 3, adjust=False).mean()
-    out["kdj_d"] = out["kdj_k"].ewm(alpha=1 / 3, adjust=False).mean()
-    out["kdj_j"] = 3 * out["kdj_k"] - 2 * out["kdj_d"]
-    out["kdj_k_minus_d"] = out["kdj_k"] - out["kdj_d"]
+    kdj_frame = kdj(high, low, close)
+    out["kdj_k"] = kdj_frame["kdj_k"]
+    out["kdj_d"] = kdj_frame["kdj_d"]
+    out["kdj_j"] = kdj_frame["kdj_j"]
+    out["kdj_k_minus_d"] = kdj_frame["kdj_k_minus_d"]
     out["kdj_golden_cross"] = ((out["kdj_k_minus_d"] > 0) & (out["kdj_k_minus_d"].shift(1) <= 0)).astype(int)
     out["kdj_dead_cross"] = ((out["kdj_k_minus_d"] < 0) & (out["kdj_k_minus_d"].shift(1) >= 0)).astype(int)
     out["kdj_golden_cross_days"] = _consecutive_days(out["kdj_k_minus_d"] > 0)
@@ -217,16 +206,11 @@ def _build_one(df: pd.DataFrame) -> pd.DataFrame:
     out["expma_golden_cross_days"] = _consecutive_days(out["expma12_gap"] > 0)
     out["expma_dead_cross_days"] = _consecutive_days(out["expma12_gap"] < 0)
 
-    tp = (high + low + close) / 3
-    tp_ma = tp.rolling(14).mean()
-    tp_md = (tp - tp_ma).abs().rolling(14).mean()
-    out["cci14"] = (tp - tp_ma) / (0.015 * tp_md.replace(0, np.nan))
+    out["cci14"] = cci(high, low, close, 14)
     out["cci14_overbought"] = (out["cci14"] > 100).astype(int)
     out["cci14_turn_down"] = (out["cci14"] < out["cci14"].shift(1)).astype(int)
     out["cci14_overbought_turn_down"] = ((out["cci14"].shift(1) > 100) & (out["cci14"] < out["cci14"].shift(1))).astype(int)
-    high_14 = high.rolling(14).max()
-    low_14 = low.rolling(14).min()
-    out["wr14"] = (high_14 - close) / (high_14 - low_14).replace(0, np.nan) * -100
+    out["wr14"] = wr(high, low, close, 14, sign="negative")
 
     out["ma20_slope_5d"] = ma20 / ma20.shift(5) - 1
     out["ma60_slope_10d"] = ma60 / ma60.shift(10) - 1
