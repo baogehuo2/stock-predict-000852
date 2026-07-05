@@ -1,90 +1,45 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
+from pathlib import Path
 
-from src.collectors.collect_etf_akshare import collect_etfs
-from src.collectors.collect_futures_akshare import collect_futures
-from src.collectors.collect_guba_eastmoney import collect_guba
-from src.collectors.collect_index_akshare import collect_indices
-from src.collectors.collect_news import collect_news
 from src.common.config import ensure_project_dirs
-from src.common.config import get_config
-from src.common.db import init_database
 from src.common.logger import get_logger
 from src.common.network import disable_env_proxies
-from src.features.build_market_features import build_market_features
-from src.features.build_model_dataset import build_model_dataset
-from src.features.build_sentiment_features import build_sentiment_features
-from src.llm.extract_event import extract_events_for_recent_news
-from src.modeling.predict import predict
-from src.modeling.generate_buy_signal import generate_buy_signals
-from src.modeling.train_buy_lgbm import train_buy_models
-from src.modeling.train_final_buy_model import train_final_buy_model
-from src.modeling.train_lgbm import train_models
-from src.report.generate_html_report import generate_html_report
 from src.report.generate_buy_signal_report import generate_buy_signal_report
+from src.report.generate_walk_forward_buy_report import generate_walk_forward_buy_report
 
 
 logger = get_logger(__name__)
 
-STEPS = {
-    "init_db": init_database,
-    "collect_index": collect_indices,
-    "collect_etf": collect_etfs,
-    "collect_futures": collect_futures,
-    "collect_guba": collect_guba,
-    "collect_news": collect_news,
-    "build_market_features": build_market_features,
-    "build_sentiment_features": build_sentiment_features,
-    "extract_events": extract_events_for_recent_news,
-    "build_dataset": build_model_dataset,
-    "train": train_models,
-    "train_buy": train_buy_models,
-    "train_buy_final": train_final_buy_model,
-    "predict": predict,
-    "generate_buy_signal": generate_buy_signals,
-    "report": generate_html_report,
+StepFunc = Callable[[], Path]
+
+STEPS: dict[str, StepFunc] = {
     "report_buy_signal": generate_buy_signal_report,
+    "report_walk_forward_buy": generate_walk_forward_buy_report,
 }
 
-DEFAULT_FLOW = [
-    "init_db",
-    "collect_index",
-    "collect_etf",
-    "collect_futures",
-    "collect_guba",
-    "collect_news",
-    "build_market_features",
-    "build_sentiment_features",
-    "extract_events",
-    "build_dataset",
-    "train_buy_final",
-    "generate_buy_signal",
-]
+DEFAULT_FLOW = ["report_buy_signal"]
 
 
 def run_steps(steps: list[str], continue_on_error: bool = True) -> None:
     ensure_project_dirs()
-    cfg = get_config()
-    use_guba_sentiment = bool(cfg.get("features", {}).get("use_guba_sentiment", False))
     for step in steps:
-        if step == "build_sentiment_features" and not use_guba_sentiment:
-            logger.info("skip step=%s because features.use_guba_sentiment=false", step)
-            continue
         logger.info("start step=%s", step)
         try:
             result = STEPS[step]()
             logger.info("finish step=%s result=%s", step, result)
         except Exception:
             logger.exception("failed step=%s", step)
-            if not continue_on_error or step == "extract_events":
+            if not continue_on_error:
                 raise
 
 
 def main() -> None:
     disable_env_proxies()
-    parser = argparse.ArgumentParser(description="Run zz1000 daily pipeline.")
-    parser.add_argument("--step", choices=sorted(STEPS), action="append", help="Run one or more specific steps.")
+    parser = argparse.ArgumentParser(description="Run Buy signal dashboard reports.")
+    parser.add_argument("--step", choices=sorted(STEPS), action="append", help="Run one or more report steps.")
     parser.add_argument("--stop-on-error", action="store_true")
     args = parser.parse_args()
     run_steps(args.step or DEFAULT_FLOW, continue_on_error=not args.stop_on_error)
