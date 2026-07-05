@@ -1,4 +1,5 @@
 param(
+    [ValidateSet("", "report_buy_signal", "report_walk_forward_buy")]
     [string]$Step = ""
 )
 

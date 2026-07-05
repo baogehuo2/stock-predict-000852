@@ -1,24 +1,26 @@
 from __future__ import annotations
 
 import argparse
-import base64
-from io import BytesIO
 from pathlib import Path
 
-import matplotlib
 import pandas as pd
+import plotly.graph_objects as go
+import plotly.io as pio
 from jinja2 import Template
+from plotly.offline.offline import get_plotlyjs
 
 from src.common.config import get_config, project_path
 from src.common.db import read_sql
 from src.common.logger import get_logger
 
 
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-
-
 logger = get_logger(__name__)
+
+UP_COLOR = "#b42318"
+DOWN_COLOR = "#067647"
+NEUTRAL_COLOR = "#98a2b3"
+INFO_COLOR = "#175cd3"
+THRESHOLD_COLOR = "#f79009"
 
 HTML_TEMPLATE = """<!doctype html>
 <html lang="zh-CN">
@@ -26,6 +28,7 @@ HTML_TEMPLATE = """<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>中证1000 Buy 信号看板</title>
+  <script>{{ plotly_js }}</script>
   <style>
     :root {
       color-scheme: light;
@@ -36,8 +39,8 @@ HTML_TEMPLATE = """<!doctype html>
       --muted: #68707c;
       --long: #b42318;
       --neutral: #475467;
-      --bull: #e9f7ef;
-      --bear: #fff0ee;
+      --bull: #fff0ee;
+      --bear: #e9f7ef;
       --accent: #175cd3;
     }
     * { box-sizing: border-box; }
@@ -76,9 +79,11 @@ HTML_TEMPLATE = """<!doctype html>
     .chart {
       display: block;
       width: 100%;
+      min-height: 420px;
       background: var(--surface);
       border: 1px solid var(--line);
       border-radius: 8px;
+      padding: 8px;
     }
     .empty {
       padding: 30px;
@@ -94,8 +99,8 @@ HTML_TEMPLATE = """<!doctype html>
     .tag { display: inline-block; padding: 3px 7px; border-radius: 4px; font-weight: 600; }
     .tag-long { color: var(--long); background: #fff0ee; }
     .tag-neutral { color: var(--neutral); background: #f2f4f7; }
-    .tag-bull { color: #067647; background: var(--bull); }
-    .tag-bear { color: #b42318; background: var(--bear); }
+    .tag-bull { color: #b42318; background: var(--bull); }
+    .tag-bear { color: #067647; background: var(--bear); }
     .tag-neutral-regime { color: var(--neutral); background: #f2f4f7; }
     footer { margin-top: 28px; color: var(--muted); font-size: 12px; line-height: 1.7; }
     @media (max-width: 900px) {
@@ -148,17 +153,17 @@ HTML_TEMPLATE = """<!doctype html>
 
   <section>
     <h2>Buy 评分与信号门槛</h2>
-    {% if score_chart %}<img class="chart" src="data:image/png;base64,{{ score_chart }}" alt="Buy评分时间序列">{% else %}<div class="empty">当前信号记录不足，生成更多日期信号后会显示评分曲线。</div>{% endif %}
+    {% if score_chart %}<div class="chart">{{ score_chart }}</div>{% else %}<div class="empty">当前信号记录不足，生成更多日期信号后会显示评分曲线。</div>{% endif %}
   </section>
 
   <section>
     <h2>指数走势与 Long 信号</h2>
-    {% if price_chart %}<img class="chart" src="data:image/png;base64,{{ price_chart }}" alt="指数走势与Long信号">{% else %}<div class="empty">当前缺少可匹配的指数行情。</div>{% endif %}
+    {% if price_chart %}<div class="chart">{{ price_chart }}</div>{% else %}<div class="empty">当前缺少可匹配的指数行情。</div>{% endif %}
   </section>
 
   <section>
     <h2>Long 信号兑现结果</h2>
-    {% if return_chart %}<img class="chart" src="data:image/png;base64,{{ return_chart }}" alt="Long信号未来7日收益">{% else %}<div class="empty">暂时没有已兑现的 Long 信号。满 7 个交易日并重建数据集后会自动回填。</div>{% endif %}
+    {% if return_chart %}<div class="chart">{{ return_chart }}</div>{% else %}<div class="empty">暂时没有已兑现的 Long 信号。满 7 个交易日并重建数据集后会自动回填。</div>{% endif %}
   </section>
 
   <section>
@@ -192,63 +197,170 @@ HTML_TEMPLATE = """<!doctype html>
 """
 
 
-def _figure_base64(fig: plt.Figure) -> str:
-    buffer = BytesIO()
-    fig.savefig(buffer, format="png", dpi=150, bbox_inches="tight", facecolor="white")
-    plt.close(fig)
-    return base64.b64encode(buffer.getvalue()).decode("ascii")
+PLOT_CONFIG = {
+    "displaylogo": False,
+    "scrollZoom": True,
+    "responsive": True,
+    "modeBarButtonsToRemove": ["lasso2d", "select2d"],
+}
+
+
+def _apply_chart_layout(fig: go.Figure, yaxis_title: str) -> go.Figure:
+    fig.update_layout(
+        autosize=True,
+        height=420,
+        margin={"l": 54, "r": 24, "t": 22, "b": 44},
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        hovermode="x unified",
+        dragmode="zoom",
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.02,
+            "xanchor": "left",
+            "x": 0,
+        },
+        font={"family": "Microsoft YaHei, PingFang SC, Arial, sans-serif", "size": 12},
+    )
+    fig.update_xaxes(
+        showgrid=False,
+        rangeslider={"visible": True, "thickness": 0.08},
+        rangeselector={
+            "buttons": [
+                {"count": 1, "label": "1月", "step": "month", "stepmode": "backward"},
+                {"count": 3, "label": "3月", "step": "month", "stepmode": "backward"},
+                {"count": 6, "label": "6月", "step": "month", "stepmode": "backward"},
+                {"step": "all", "label": "全部"},
+            ],
+            "font": {"size": 11},
+        },
+    )
+    fig.update_yaxes(
+        title=yaxis_title,
+        gridcolor="#e5e7eb",
+        zerolinecolor="#98a2b3",
+    )
+    return fig
+
+
+def _chart_html(fig: go.Figure) -> str:
+    return pio.to_html(
+        fig,
+        full_html=False,
+        include_plotlyjs=False,
+        config=PLOT_CONFIG,
+        default_width="100%",
+        default_height="420px",
+    )
+
+
+def _date_axis(values: pd.Series) -> list[str]:
+    return pd.to_datetime(values).dt.strftime("%Y-%m-%d").tolist()
 
 
 def _score_chart(signals: pd.DataFrame) -> str | None:
     if signals.empty:
         return None
-    fig, ax = plt.subplots(figsize=(11.2, 4.2))
-    ax.plot(signals["trade_date"], signals["buy_proba"], color="#175cd3", marker="o", markersize=3, linewidth=1.6, label="Buy score")
-    ax.plot(signals["trade_date"], signals["buy_threshold"], color="#b42318", linestyle="--", linewidth=1.3, label="Threshold")
+    x_values = _date_axis(signals["trade_date"])
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=x_values,
+            y=signals["buy_proba"],
+            mode="lines+markers",
+            name="Buy score",
+            line={"color": INFO_COLOR, "width": 2},
+            marker={"size": 6},
+            hovertemplate="%{x|%Y-%m-%d}<br>Buy score=%{y:.4f}<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=x_values,
+            y=signals["buy_threshold"],
+            mode="lines",
+            name="Threshold",
+            line={"color": THRESHOLD_COLOR, "width": 2, "dash": "dash"},
+            hovertemplate="%{x|%Y-%m-%d}<br>Threshold=%{y:.2f}<extra></extra>",
+        )
+    )
     long_rows = signals[signals["direction"] == "long"]
     if not long_rows.empty:
-        ax.scatter(long_rows["trade_date"], long_rows["buy_proba"], color="#b42318", marker="^", s=55, label="Long", zorder=4)
-    ax.set_ylim(0, 1)
-    ax.set_ylabel("Score")
-    ax.grid(axis="y", alpha=0.25)
-    ax.legend(frameon=False, ncol=3, loc="upper left")
-    fig.autofmt_xdate()
-    fig.tight_layout()
-    return _figure_base64(fig)
+        fig.add_trace(
+            go.Scatter(
+                x=_date_axis(long_rows["trade_date"]),
+                y=long_rows["buy_proba"],
+                mode="markers",
+                name="Long",
+                marker={"color": UP_COLOR, "size": 11, "symbol": "triangle-up"},
+                hovertemplate="%{x|%Y-%m-%d}<br>Long score=%{y:.4f}<extra></extra>",
+            )
+        )
+    _apply_chart_layout(fig, "Score")
+    fig.update_yaxes(range=[0, 1])
+    return _chart_html(fig)
 
 
 def _price_chart(signals: pd.DataFrame, prices: pd.DataFrame) -> str | None:
     if signals.empty or prices.empty:
         return None
     merged = prices.merge(signals[["trade_date", "direction"]], on="trade_date", how="left")
-    fig, ax = plt.subplots(figsize=(11.2, 4.2))
-    ax.plot(merged["trade_date"], merged["close"], color="#344054", linewidth=1.7, label="CSI 1000 close")
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=_date_axis(merged["trade_date"]),
+            y=merged["close"],
+            mode="lines",
+            name="CSI 1000 close",
+            line={"color": "#344054", "width": 2},
+            hovertemplate="%{x|%Y-%m-%d}<br>Close=%{y:.2f}<extra></extra>",
+        )
+    )
     long_rows = merged[merged["direction"] == "long"]
     if not long_rows.empty:
-        ax.scatter(long_rows["trade_date"], long_rows["close"], color="#b42318", marker="^", s=58, label="Long", zorder=4)
-    ax.set_ylabel("Close")
-    ax.grid(axis="y", alpha=0.25)
-    ax.legend(frameon=False, loc="upper left")
-    fig.autofmt_xdate()
-    fig.tight_layout()
-    return _figure_base64(fig)
+        fig.add_trace(
+            go.Scatter(
+                x=_date_axis(long_rows["trade_date"]),
+                y=long_rows["close"],
+                mode="markers",
+                name="Long",
+                marker={"color": UP_COLOR, "size": 11, "symbol": "triangle-up"},
+                hovertemplate="%{x|%Y-%m-%d}<br>Long close=%{y:.2f}<extra></extra>",
+            )
+        )
+    _apply_chart_layout(fig, "Close")
+    return _chart_html(fig)
 
 
 def _return_chart(signals: pd.DataFrame) -> str | None:
     realized = signals[(signals["direction"] == "long") & signals["future_ret_7d"].notna()].copy()
     if realized.empty:
         return None
-    colors = ["#067647" if value > 0.005 else "#b42318" for value in realized["future_ret_7d"]]
-    fig, ax = plt.subplots(figsize=(11.2, 4.2))
-    ax.bar(realized["trade_date"], realized["future_ret_7d"] * 100, color=colors, width=2.5)
-    ax.axhline(0.5, color="#175cd3", linestyle="--", linewidth=1.2, label="Target 0.5%")
-    ax.axhline(0, color="#98a2b3", linewidth=0.8)
-    ax.set_ylabel("Future 7D return (%)")
-    ax.grid(axis="y", alpha=0.25)
-    ax.legend(frameon=False, loc="upper left")
-    fig.autofmt_xdate()
-    fig.tight_layout()
-    return _figure_base64(fig)
+    realized["future_ret_pct"] = realized["future_ret_7d"] * 100
+    colors = [
+        UP_COLOR if value > 0 else DOWN_COLOR if value < 0 else NEUTRAL_COLOR
+        for value in realized["future_ret_7d"]
+    ]
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=_date_axis(realized["trade_date"]),
+            y=realized["future_ret_pct"],
+            name="Future 7D return",
+            marker={"color": colors},
+            hovertemplate="%{x|%Y-%m-%d}<br>Future 7D return=%{y:.2f}%<extra></extra>",
+        )
+    )
+    fig.add_hline(
+        y=0.5,
+        line={"color": INFO_COLOR, "width": 2, "dash": "dash"},
+        annotation_text="Target 0.5%",
+        annotation_position="top left",
+    )
+    fig.add_hline(y=0, line={"color": NEUTRAL_COLOR, "width": 1})
+    _apply_chart_layout(fig, "Future 7D return (%)")
+    return _chart_html(fig)
 
 
 def _percent(value: float | None, digits: int = 2) -> str:
@@ -344,6 +456,7 @@ def generate_buy_signal_report(
         "buy_threshold": f"{float(latest_row['buy_threshold']):.2f}",
     }
     html = Template(HTML_TEMPLATE).render(
+        plotly_js=get_plotlyjs(),
         model_version=model_version,
         feature_version=latest_row["feature_version"],
         generated_at=pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
