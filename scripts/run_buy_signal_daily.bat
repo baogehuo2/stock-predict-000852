@@ -35,11 +35,11 @@ python -m src.llm.extract_event --start-date %START_DATE% --end-date %END_DATE% 
 if errorlevel 1 goto :failed
 
 call :step "4/6 Rebuild market features"
-python .\main_daily_run.py --step build_market_features --stop-on-error
+python .\main_buy_signal_run.py --step build_market_features --stop-on-error
 if errorlevel 1 goto :failed
 
 call :step "5/6 Rebuild model dataset"
-python .\main_daily_run.py --step build_dataset --stop-on-error
+python .\main_buy_signal_run.py --step technical_indicator_self_check --step build_dataset --stop-on-error
 if errorlevel 1 goto :failed
 
 call :step "6/6 Generate official Buy signals"

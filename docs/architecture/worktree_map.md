@@ -1,4 +1,4 @@
-# Worktree 约定
+﻿# Worktree 约定
 
 ## 当前建议分工
 

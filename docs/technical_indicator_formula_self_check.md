@@ -1,11 +1,12 @@
 # 技术指标公式自查与重构规范
 
-适用分支：`feature/bottom-fishing-v1`
+适用分支：`feature/buy-signal-research`
 
 对应代码重点：
 
-- `src/features/build_bottom_dataset.py`
-- 如从 buy 分支迁移技术指标工具函数，必须同步更新本文档。
+- `src/features/build_market_features.py`
+- `src/features/build_manual_bottom_features.py`
+- 后续如新增分钟特征，必须同步纳入本文档。
 
 ## 目标
 
@@ -67,34 +68,33 @@
 
 ## 必须自查的指标清单
 
-### 收益、回撤与均线
+### 收益与均线
 
 当前字段：
 
 - `ret_1d/ret_3d/ret_5d/ret_10d`
-- `downside_ret_3d/downside_ret_5d`
-- `drawdown_20d/drawdown_60d/drawdown_120d`
-- `distance_low_5d/distance_low_10d/distance_low_20d`
-- `ma5_gap/ma10_gap/ma20_gap/ma60_gap`
+- `ma5_gap/ma10_gap/ma20_gap`
 - `ma20_slope_5d/ma60_slope_10d`
-- `below_ma20_days/below_ma60_days`
+- `close_above_ma20/close_above_ma60`
+- `above_ma20_days/below_ma20_days/above_ma60_days/below_ma60_days`
+- `ma20_ma60_gap`
 
 公式口径：
 
 ```text
 ret_N = close / close.shift(N) - 1
-downside_ret_N = SUM(MIN(ret_1d, 0), N)
-drawdown_N = close / rolling_max(close 或 high, N) - 1
-distance_low_N = close / rolling_min(low, N) - 1
 MA_N = mean(close, N)
 maN_gap = close / MA_N - 1
+ma20_slope_5d = MA20 / MA20.shift(5) - 1
+ma60_slope_10d = MA60 / MA60.shift(10) - 1
+ma20_ma60_gap = MA20 / MA60 - 1
 ```
 
 自查要求：
 
-- `drawdown_N` 必须明确使用 close 高点还是 high 高点。
-- 抄底模型如果强调最大下跌深度，建议评估 `close / HHV(high,N) - 1`。
-- 连续天数只按交易日计数。
+- 与 AkShare 日K `close` 字段逐日对齐。
+- 检查节假日和停牌缺口，不得按自然日补空行。
+- `*_days` 连续天数必须只按交易日连续计数。
 
 ### RSI
 
@@ -120,77 +120,8 @@ RSI_N = SMA(UP, N, 1) / SMA(ABS_DIFF, N, 1) * 100
 实现要求：
 
 - 新增统一 `_sma_cn(values, window, weight=1)`。
-- `rsi6/rsi14` 全部调用统一实现。
-- 抄底候选阈值 `rsi6 <= 30` 依赖该口径，修正后必须重新评估候选覆盖率。
-
-### WR
-
-当前字段：
-
-- `wr14`
-- 候选阈值 `wr14 <= -80`
-
-当前代码使用负数口径：
-
-```text
-wr14 = (HHV(HIGH,14) - CLOSE) / (HHV(HIGH,14) - LLV(LOW,14)) * -100
-```
-
-常见行情软件也可能显示正数口径：
-
-```text
-WR14_POSITIVE = (HHV(HIGH,14) - CLOSE) / (HHV(HIGH,14) - LLV(LOW,14)) * 100
-```
-
-自查要求：
-
-- 如果保留负数口径，阈值仍是 `<= -80`。
-- 如果改正数口径，阈值应同步调整为 `>= 80`。
-- 不能只改公式不改阈值。
-
-### CCI
-
-当前字段：
-
-- `cci14`
-
-常见公式：
-
-```text
-TYP = (HIGH + LOW + CLOSE) / 3
-CCI_N = (TYP - MA(TYP, N)) / (0.015 * AVEDEV(TYP, N))
-AVEDEV(TYP, N) = MA(ABS(TYP - MA(TYP, N)), N)
-```
-
-自查要求：
-
-- 当前实现接近常见公式，但必须确认 `AVEDEV` 的滚动窗口和 `MA(TYP,N)` 对齐。
-- 分母为0输出 `NaN`。
-
-### BOLL
-
-当前字段：
-
-- `boll_width`
-- `boll_position`
-- `boll_lower_break`
-- 周K `week_boll_*`
-
-常见公式：
-
-```text
-MID = MA(CLOSE, 20)
-STD20 = STD(CLOSE, 20)
-UPPER = MID + 2 * STD20
-LOWER = MID - 2 * STD20
-boll_width = (UPPER - LOWER) / MID
-boll_position = (CLOSE - LOWER) / (UPPER - LOWER)
-```
-
-自查要求：
-
-- pandas `rolling.std()` 默认 `ddof=1`，部分行情软件可能使用总体标准差 `ddof=0`。必须用样本对齐后固定。
-- 候选阈值 `boll_position <= 0.15` 依赖 BOLL 口径，修正后必须重新统计。
+- `rsi6/rsi14/bf_rsi6/bf_rsi14` 全部调用统一实现。
+- 保留回归测试样本，禁止再次退回简单 rolling mean。
 
 ### MACD
 
@@ -199,7 +130,8 @@ boll_position = (CLOSE - LOWER) / (UPPER - LOWER)
 - `macd`
 - `macd_signal`
 - `macd_hist`
-- `macd_hist_delta_1d/macd_hist_delta_3d`
+- `macd_golden_cross/macd_dead_cross`
+- `macd_hist_turn_positive/macd_hist_turn_negative`
 
 建议公式：
 
@@ -215,7 +147,8 @@ MACD_HIST_MODEL = DIF - DEA
 自查要求：
 
 - 东方财富图上通常显示 `MACD = 2 * (DIF - DEA)`。
-- 如果模型字段继续使用 `DIF - DEA`，必须在字段说明里写清楚它是半幅柱。
+- 如果模型字段继续使用 `DIF - DEA`，必须在字段说明里写清楚它是半幅柱，不等于行情软件显示柱。
+- 金叉死叉应使用 `DIF - DEA` 的正负穿越，不受柱子是否乘2影响。
 
 ### KDJ
 
@@ -223,8 +156,8 @@ MACD_HIST_MODEL = DIF - DEA
 
 - `kdj_k/kdj_d/kdj_j`
 - `kdj_k_minus_d`
-- `kdj_golden_cross`
-- 周K `week_kdj_*`
+- `kdj_golden_cross/kdj_dead_cross`
+- `kdj_j_overbought/kdj_j_oversold`
 
 常见公式：
 
@@ -239,13 +172,88 @@ J = 3 * K - 2 * D
 
 - 初始 `K/D` 建议按行情软件口径设为 `50`，或用足够长历史预热后再截取。
 - 当前 `ewm(alpha=1/3, adjust=False)` 数学上接近 `SMA(X,3,1)`，但初值不同；必须通过样本核对。
-- 当 `HHV == LLV` 时，RSV 不得产生无穷值。
+- 当 `HHV == LLV` 时，RSV 不得产生无穷值；建议用 `50` 或 `NaN`，并固定口径。
+
+### BOLL
+
+当前字段：
+
+- `boll_width`
+- `boll_lower_break`
+- `boll_upper_break`
+- `boll_band_position`
+- bottom 特征中的 `bf_boll_*`
+
+常见公式：
+
+```text
+MID = MA(CLOSE, 20)
+STD20 = STD(CLOSE, 20)
+UPPER = MID + 2 * STD20
+LOWER = MID - 2 * STD20
+boll_width = (UPPER - LOWER) / MID
+boll_band_position = (CLOSE - LOWER) / (UPPER - LOWER)
+```
+
+自查要求：
+
+- pandas `rolling.std()` 默认 `ddof=1`，部分行情软件可能使用总体标准差 `ddof=0`。必须用样本对齐后固定。
+- 文档中必须写清楚最终采用 `ddof=0` 还是 `ddof=1`。
+- 如果模型历史字段已经使用 `ddof=1`，重构时要评估是否造成特征漂移。
+
+### CCI
+
+当前字段：
+
+- `cci14`
+- `cci14_overbought`
+- `cci14_turn_down`
+- `cci14_overbought_turn_down`
+
+常见公式：
+
+```text
+TYP = (HIGH + LOW + CLOSE) / 3
+CCI_N = (TYP - MA(TYP, N)) / (0.015 * AVEDEV(TYP, N))
+AVEDEV(TYP, N) = MA(ABS(TYP - MA(TYP, N)), N)
+```
+
+自查要求：
+
+- 当前实现接近常见公式，但必须确认 `AVEDEV` 的滚动窗口和 `MA(TYP,N)` 对齐。
+- 分母为0输出 `NaN`。
+
+### WR
+
+当前字段：
+
+- `wr14`
+- bottom 候选阈值 `wr14 <= -80`
+
+当前代码使用负数口径：
+
+```text
+wr14 = (HHV(HIGH,14) - CLOSE) / (HHV(HIGH,14) - LLV(LOW,14)) * -100
+```
+
+常见行情软件也可能显示正数口径：
+
+```text
+WR14_POSITIVE = (HHV(HIGH,14) - CLOSE) / (HHV(HIGH,14) - LLV(LOW,14)) * 100
+```
+
+自查要求：
+
+- 必须决定模型字段采用负数口径还是正数口径。
+- 如果保留负数口径，阈值仍是 `<= -80`；如果改正数口径，阈值应同步调整为 `>= 80`。
+- 不能只改公式不改阈值。
 
 ### ATR 与波动
 
 当前字段：
 
 - `atr14`
+- `atr_expand`
 - `volatility_5d/10d/20d`
 - `volatility_expand`
 
@@ -264,92 +272,103 @@ volatility_expand = volatility_5d / volatility_20d
 - 行情软件 ATR 通常是不除以 close 的点数值；模型当前使用归一化 `ATR / close`。必须在字段说明中写清。
 - `volatility` 是收益率标准差，不是价格标准差。
 
-### 影线、缺口、振幅与连续涨跌
+### 影线、缺口与振幅
 
 当前字段：
 
+- `upper_shadow_ratio/lower_shadow_ratio/body_ratio`
 - `intraday_range`
-- `body_return`
-- `lower_shadow_ratio`
-- `long_lower_shadow`
-- `gap_down`
-- `down_streak/up_streak`
+- `upper_probe/lower_probe/doji`
+- `long_upper_shadow/long_lower_shadow`
+- `gap_up/gap_down`
+- bottom 中 `lower_shadow_ratio/long_lower_shadow/gap_down`
 
 公式：
 
 ```text
 range = HIGH - LOW
-body_return = CLOSE / OPEN - 1
+body = ABS(CLOSE - OPEN)
+upper_shadow = HIGH - MAX(OPEN, CLOSE)
 lower_shadow = MIN(OPEN, CLOSE) - LOW
+upper_shadow_ratio = upper_shadow / range
 lower_shadow_ratio = lower_shadow / range
-intraday_range = range / previous_close
+body_ratio = body / range
+intraday_range = range / close 或 range / previous_close
+gap_up = OPEN > REF(CLOSE,1) * 1.005
 gap_down = OPEN < REF(CLOSE,1) * 0.995
 ```
 
 自查要求：
 
-- buy 分支 `intraday_range = range / close`，bottom 分支当前是 `range / previous_close`。如果要共用指标函数，必须统一或明确保留差异。
-- `range=0` 时输出 `NaN`。
+- buy 分支 `intraday_range = range / close`；bottom 分支 `intraday_range = range / previous_close`。重构时必须统一或明确差异。
+- `range=0` 时输出 `NaN`，不要误判十字星。
 
-### 成交量与相对强弱
+### 成交量与成交额
 
 当前字段：
 
+- `amount_zscore_20d`
 - `volume_zscore_20d`
 - `volume_ratio_5d_20d`
-- `relative_hs300_1d/5d`
-- `relative_zz500_1d/5d`
-- `relative_cyb_1d/5d`
+- `amount_percentile_60d`
+- `volume_percentile_60d`
+- `down_with_volume/up_with_volume/shrink_rebound`
 
 公式：
 
 ```text
-volume_zscore_20d = (volume - MA(volume,20)) / STD(volume,20)
-volume_ratio_5d_20d = MA(volume,5) / MA(volume,20)
-relative_index_1d = ret_000852_1d - ret_benchmark_1d
-relative_index_5d = ret_000852_5d - ret_benchmark_5d
+zscore_N = (x - MA(x,N)) / STD(x,N)
+ratio_5_20 = MA(volume,5) / MA(volume,20)
+percentile_60 = 当前值在最近60个交易日中的百分位排名
 ```
 
 自查要求：
 
 - AkShare 不同接口的 `volume/amount` 单位可能不同，必须记录数据库单位。
-- 相对强弱必须保证目标指数和基准指数在同一交易日对齐。
+- 指数成交量字段经常和股票口径不同，不允许跨接口直接比较。
+- 百分位排名要固定是否包含当前日；当前实现包含当前日。
+
+### 回撤、低点距离与候选特征
+
+当前字段：
+
+- `drawdown_20d/drawdown_60d`
+- bottom 中 `drawdown_20d/drawdown_60d/drawdown_120d`
+- `distance_low_5d/10d/20d`
+- `candidate_depth/candidate_oversold/candidate_trend/candidate_stress/candidate_score`
+
+公式：
+
+```text
+drawdown_N = close / rolling_max(high_or_close, N) - 1
+distance_low_N = close / rolling_min(low, N) - 1
+```
+
+自查要求：
+
+- 当前 buy 分支 `drawdown_N` 用 close 的滚动最高值；bottom 分支也应核对是否要用 high 的滚动最高值。
+- 抄底特征如果强调真实下跌空间，建议评估 `close / HHV(high,N) - 1`。
+- candidate 规则的阈值必须随 RSI/WR/BOLL 口径同步修正。
 
 ### 周K与因果周K特征
 
 当前字段：
 
-- `week_*`
+- `bf_week_*`
+- bottom 分支 `week_*`
 
 自查要求：
 
 - 当前周K是“因果进行中周K”：周内每日使用当周截至当天的数据，不是完整周五K线。
-- 文档和字段名必须明确“进行中周K”。
+- 文档和字段名必须保留 `causal` 或明确说明“进行中周K”。
 - 周K KDJ/BOLL/MA 也要使用同一套指标公式自查。
 - 不能在周二使用周五收盘后才知道的完整周K。
-
-### 候选规则
-
-当前字段：
-
-- `candidate_depth`
-- `candidate_oversold`
-- `candidate_trend`
-- `candidate_stress`
-- `candidate_score`
-- `is_candidate`
-
-自查要求：
-
-- RSI、WR、BOLL 任一口径变化，都必须重新统计 `candidate_oversold`。
-- `candidate_score >= min_conditions` 的覆盖率要按年度输出。
-- 重构后必须重新评估 `quality_bottom_label/path_rebound_label/continuation_risk_label` 的样本分布。
 
 ## 重构实施要求
 
 ### 统一工具函数
 
-建议从 buy 分支迁移或共同维护统一模块：
+建议新增统一技术指标工具模块，例如：
 
 ```text
 src/features/technical_indicators.py
@@ -419,16 +438,17 @@ note
 - 禁止只因为 pandas 代码能运行就认为指标正确。
 - 禁止从测试区间起点才开始计算递推指标。
 - 禁止分钟K直接使用未核对过的数据库聚合表。
-- 禁止只改指标公式、不重跑特征分布、候选覆盖率和滚动验证。
+- 禁止只改指标公式、不重跑特征消融和滚动验证。
+- 禁止改动 Guba sentiment 开关；`use_guba_sentiment` 仍保持当前配置。
 
 ## 当前已知高风险点
 
 1. `rsi6/rsi14` 当前简单 rolling RSI 与东方财富 RSI 不一致，必须优先修正。
-2. `WR` 当前为负数口径，阈值依赖此口径，不能随意改为正数。
-3. `BOLL` 标准差 `ddof` 未固定，需要抽样决定。
-4. `KDJ` 初值和 `SMA` 递推口径需要抽样核对。
-5. `MACD hist` 如果对齐行情软件显示，可能需要乘2；如果不乘2，必须明确是模型半幅柱。
-6. `intraday_range` 与 buy 分支分母不同，需要统一或写清差异。
+2. `macd_hist` 当前多处是 `DIF - DEA`，若要对齐行情软件显示，应确认是否需要乘2。
+3. `KDJ` 初值和 `SMA` 递推口径需要抽样核对。
+4. `BOLL` 标准差 `ddof` 未固定，需要抽样决定。
+5. `WR` 当前为负数口径，阈值依赖此口径，不能随意改为正数。
+6. buy 与 bottom 的 `intraday_range` 分母不同，需要统一或明确保留差异。
 7. 60分钟K线必须从1分钟数据按东方财富1h切分重新合成后再计算指标。
 
 ## 验收条件
@@ -440,4 +460,4 @@ note
 3. RSI6 在 `2025-03-24` 日K样本上约等于 `29.14`。
 4. 所有指标字段有公式说明、单位说明和缺失值说明。
 5. buy 与 bottom 分支使用同一套核心指标函数。
-6. 重跑 bottom 模型前先说明哪些指标发生口径变化，并重新做滚动样本外验证。
+6. 重跑模型前先说明哪些指标发生口径变化，并重新做滚动样本外验证。
