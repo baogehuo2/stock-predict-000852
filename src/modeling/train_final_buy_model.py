@@ -8,7 +8,7 @@ from src.common.config import get_config, project_path
 from src.common.logger import get_logger
 from src.modeling.buy_feature_set import DEFAULT_BUY_FEATURE_VERSION, select_buy_features
 from src.modeling.data import load_dataset
-from src.modeling.walk_forward_buy_lgbm import _fit_model
+from src.modeling.probability_lgbm import fit_probability_model
 
 
 logger = get_logger(__name__)
@@ -28,7 +28,7 @@ def train_final_buy_model(output_file: str | None = None, min_train_rows: int = 
     if len(train) < min_train_rows:
         raise RuntimeError(f"Not enough rows for final Buy model: {len(train)}")
     random_state = int(cfg["model"].get("random_state", 42))
-    model, usable_features = _fit_model(train, features, "buy_label_7d", random_state)
+    model, usable_features = fit_probability_model(train, features, "buy_label_7d", random_state)
     model_version = str(buy_cfg.get("model_version", "buy-signal-v1.0"))
     feature_version = str(buy_cfg.get("feature_version", DEFAULT_BUY_FEATURE_VERSION))
     label_threshold = float(buy_cfg.get("label_thresholds", {}).get("7", 0.0))
