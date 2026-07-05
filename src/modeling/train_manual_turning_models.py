@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import argparse
 import json
+from functools import partial
 
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis, QuadraticDiscriminantAnalysis
+from sklearn.feature_selection import SelectKBest, VarianceThreshold, mutual_info_classif
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import average_precision_score, roc_auc_score
 from sklearn.model_selection import ParameterGrid
 from sklearn.pipeline import Pipeline
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import SplineTransformer, StandardScaler
+from sklearn.svm import SVC
 
 from src.common.config import get_config, project_path
 from src.common.lightgbm_compat import disable_broken_dask_autoload
@@ -58,6 +62,22 @@ def _normalize_model_kind(model_kind: str) -> str:
         return "bp"
     if normalized in {"rf", "randomforest", "random-forest", "random_forest"}:
         return "random_forest"
+    if normalized in {"gam", "spline_gam", "spline-gam"}:
+        return "gam"
+    if normalized in {"linear_discriminant_analysis", "linear-discriminant-analysis"}:
+        return "lda"
+    if normalized in {"quadratic_discriminant_analysis", "quadratic-discriminant-analysis"}:
+        return "qda"
+    if normalized in {"svc", "support_vector_machine", "support-vector-machine"}:
+        return "svm"
+    if normalized in {"l1-logistic", "l1_logit", "l1-logit"}:
+        return "l1_logistic"
+    if normalized in {"l1-logistic-var", "l1_logistic_variance", "l1-logistic-variance"}:
+        return "l1_logistic_var"
+    if normalized in {"l1-logistic-kbest", "l1_logistic_selectkbest", "l1-logistic-selectkbest"}:
+        return "l1_logistic_kbest"
+    if normalized in {"xgboost-small", "xgb_small", "xgb-small"}:
+        return "xgboost_small"
     return normalized
 
 
@@ -176,11 +196,14 @@ def _fit_model(
         random_state,
         _scale_pos_weight(target),
     )
-    pipeline.fit(
-        train[usable],
-        target,
-        model__sample_weight=_sample_weight(train, label_col, side),
-    )
+    if model_kind in {"lda", "qda"}:
+        pipeline.fit(train[usable], target)
+    else:
+        pipeline.fit(
+            train[usable],
+            target,
+            model__sample_weight=_sample_weight(train, label_col, side),
+        )
     return pipeline, usable, selected_params
 
 
@@ -196,10 +219,20 @@ def _make_pipeline(
     random_state: int,
     scale_pos_weight: float,
 ) -> Pipeline:
-    if model_kind == "logistic":
-        pipeline = Pipeline(
+    if model_kind in {"logistic", "l1_logistic", "l1_logistic_var", "l1_logistic_kbest"}:
+        steps = [("imputer", SimpleImputer(strategy="median"))]
+        if model_kind in {"l1_logistic_var", "l1_logistic_kbest"}:
+            steps.append(("variance", VarianceThreshold(threshold=float(params.get("variance_threshold", 1e-10)))))
+        if model_kind == "l1_logistic_kbest":
+            score_func = partial(mutual_info_classif, random_state=random_state)
+            steps.append(("select", SelectKBest(score_func=score_func, k=int(params.get("k", 50)))))
+        penalty = str(params.get("penalty", "l2"))
+        solver = str(params.get("solver", "lbfgs"))
+        if model_kind.startswith("l1_"):
+            penalty = "l1"
+            solver = str(params.get("solver", "liblinear"))
+        steps.extend(
             [
-                ("imputer", SimpleImputer(strategy="median")),
                 ("scaler", StandardScaler()),
                 (
                     "model",
@@ -207,6 +240,81 @@ def _make_pipeline(
                         class_weight="balanced",
                         max_iter=int(params.get("max_iter", 4000)),
                         C=float(params.get("C", 1.0)),
+                        penalty=penalty,
+                        solver=solver,
+                        random_state=random_state,
+                    ),
+                ),
+            ]
+        )
+        pipeline = Pipeline(steps)
+    elif model_kind == "gam":
+        pipeline = Pipeline(
+            [
+                ("imputer", SimpleImputer(strategy="median")),
+                ("scaler", StandardScaler()),
+                (
+                    "spline",
+                    SplineTransformer(
+                        n_knots=int(params.get("n_knots", 4)),
+                        degree=int(params.get("degree", 3)),
+                        knots="quantile",
+                        include_bias=False,
+                    ),
+                ),
+                (
+                    "model",
+                    LogisticRegression(
+                        class_weight="balanced",
+                        max_iter=int(params.get("max_iter", 4000)),
+                        C=float(params.get("C", 0.1)),
+                        solver="lbfgs",
+                        random_state=random_state,
+                    ),
+                ),
+            ]
+        )
+    elif model_kind == "lda":
+        pipeline = Pipeline(
+            [
+                ("imputer", SimpleImputer(strategy="median")),
+                ("scaler", StandardScaler()),
+                (
+                    "model",
+                    LinearDiscriminantAnalysis(
+                        solver=str(params.get("solver", "lsqr")),
+                        shrinkage=params.get("shrinkage", "auto"),
+                    ),
+                ),
+            ]
+        )
+    elif model_kind == "qda":
+        pipeline = Pipeline(
+            [
+                ("imputer", SimpleImputer(strategy="median")),
+                ("scaler", StandardScaler()),
+                (
+                    "model",
+                    QuadraticDiscriminantAnalysis(
+                        reg_param=float(params.get("reg_param", 0.5)),
+                    ),
+                ),
+            ]
+        )
+    elif model_kind == "svm":
+        pipeline = Pipeline(
+            [
+                ("imputer", SimpleImputer(strategy="median")),
+                ("scaler", StandardScaler()),
+                (
+                    "model",
+                    SVC(
+                        C=float(params.get("C", 1.0)),
+                        kernel=str(params.get("kernel", "rbf")),
+                        gamma=params.get("gamma", "scale"),
+                        degree=int(params.get("degree", 3)),
+                        class_weight="balanced",
+                        probability=True,
                         random_state=random_state,
                     ),
                 ),
@@ -234,7 +342,7 @@ def _make_pipeline(
                 ),
             ]
         )
-    elif model_kind == "xgboost":
+    elif model_kind in {"xgboost", "xgboost_small"}:
         from xgboost import XGBClassifier
 
         pipeline = Pipeline(
@@ -319,6 +427,42 @@ def _candidate_params(model_kind: str) -> list[dict]:
                 }
             )
         )
+    if model_kind == "l1_logistic":
+        return list(
+            ParameterGrid(
+                {
+                    "C": [0.003, 0.01, 0.03, 0.1, 0.3, 1.0],
+                    "penalty": ["l1"],
+                    "solver": ["liblinear"],
+                    "max_iter": [4000],
+                }
+            )
+        )
+    if model_kind == "l1_logistic_var":
+        return list(
+            ParameterGrid(
+                {
+                    "C": [0.003, 0.01, 0.03, 0.1, 0.3, 1.0],
+                    "penalty": ["l1"],
+                    "solver": ["liblinear"],
+                    "variance_threshold": [1e-10, 1e-6],
+                    "max_iter": [4000],
+                }
+            )
+        )
+    if model_kind == "l1_logistic_kbest":
+        return list(
+            ParameterGrid(
+                {
+                    "C": [0.003, 0.01, 0.03, 0.1, 0.3],
+                    "penalty": ["l1"],
+                    "solver": ["liblinear"],
+                    "variance_threshold": [1e-10],
+                    "k": [30, 50, 80],
+                    "max_iter": [4000],
+                }
+            )
+        )
     if model_kind == "lightgbm":
         return list(
             ParameterGrid(
@@ -334,6 +478,44 @@ def _candidate_params(model_kind: str) -> list[dict]:
                 }
             )
         )
+    if model_kind == "gam":
+        return list(
+            ParameterGrid(
+                {
+                    "C": [0.03, 0.1, 0.3],
+                    "n_knots": [3, 4],
+                    "degree": [2, 3],
+                    "max_iter": [4000],
+                }
+            )
+        )
+    if model_kind == "lda":
+        return list(
+            ParameterGrid(
+                {
+                    "solver": ["lsqr"],
+                    "shrinkage": ["auto", 0.1, 0.3, 0.5, 0.7],
+                }
+            )
+        )
+    if model_kind == "qda":
+        return list(
+            ParameterGrid(
+                {
+                    "reg_param": [0.1, 0.3, 0.5, 0.7, 0.9],
+                }
+            )
+        )
+    if model_kind == "svm":
+        return list(
+            ParameterGrid(
+                {
+                    "C": [0.3, 1.0],
+                    "kernel": ["rbf", "linear"],
+                    "gamma": ["scale"],
+                }
+            )
+        )
     if model_kind == "xgboost":
         return list(
             ParameterGrid(
@@ -346,6 +528,21 @@ def _candidate_params(model_kind: str) -> list[dict]:
                     "colsample_bytree": [0.65, 0.85],
                     "reg_lambda": [1.0, 5.0],
                     "reg_alpha": [0.0, 0.1],
+                }
+            )
+        )
+    if model_kind == "xgboost_small":
+        return list(
+            ParameterGrid(
+                {
+                    "n_estimators": [300, 600],
+                    "learning_rate": [0.03, 0.05],
+                    "max_depth": [2, 3],
+                    "min_child_weight": [8, 15],
+                    "subsample": [0.70],
+                    "colsample_bytree": [0.50, 0.70],
+                    "reg_lambda": [5.0, 10.0],
+                    "reg_alpha": [0.0, 0.5],
                 }
             )
         )
@@ -464,11 +661,14 @@ def _select_hyperparams(
     for params in candidates:
         try:
             pipeline = _make_pipeline(model_kind, params, random_state, _scale_pos_weight(y_train))
-            pipeline.fit(
-                inner_train[features],
-                y_train,
-                model__sample_weight=_sample_weight(inner_train, label_col, side),
-            )
+            if model_kind in {"lda", "qda"}:
+                pipeline.fit(inner_train[features], y_train)
+            else:
+                pipeline.fit(
+                    inner_train[features],
+                    y_train,
+                    model__sample_weight=_sample_weight(inner_train, label_col, side),
+                )
             proba = _positive_probability(pipeline, valid, features)
             ap = _safe_ap(y_valid, proba)
             auc = _safe_auc(y_valid, proba)
@@ -540,6 +740,35 @@ def _safe_ap(y_true: pd.Series, proba: np.ndarray) -> float | None:
     return float(average_precision_score(y_true, proba))
 
 
+def _signal_classification_metrics(part: pd.DataFrame, signal: pd.DataFrame, label_col: str) -> dict:
+    positives = int(part[label_col].sum()) if label_col in part else 0
+    true_positives = int(signal[label_col].sum()) if len(signal) and label_col in signal else 0
+    precision = float(true_positives / len(signal)) if len(signal) else None
+    recall = float(true_positives / positives) if positives else None
+    f2 = None
+    if precision is not None and recall is not None and (4 * precision + recall) > 0:
+        f2 = float((5 * precision * recall) / (4 * precision + recall))
+    return {
+        "true_positive_count": true_positives,
+        "recall": recall,
+        "f2_score": f2,
+    }
+
+
+def _signal_outcome_metrics(signal: pd.DataFrame) -> dict:
+    return {
+        "avg_future_ret_15d": float(signal["future_ret_15d"].mean()) if len(signal) else None,
+        "avg_future_mfe_15d": float(signal["future_mfe_15d"].mean()) if len(signal) else None,
+        "avg_future_mae_15d": float(signal["future_mae_15d"].mean()) if len(signal) else None,
+        "quality_bottom_rate": float(signal["quality_bottom_label"].mean())
+        if len(signal) and "quality_bottom_label" in signal
+        else None,
+        "continuation_risk_rate": float(signal["continuation_risk_label"].mean())
+        if len(signal) and "continuation_risk_label" in signal
+        else None,
+    }
+
+
 def _threshold_rows(
     part: pd.DataFrame,
     label_col: str,
@@ -552,20 +781,43 @@ def _threshold_rows(
         signal = part[part[proba_col] >= threshold]
         rows.append(
             {
+                "selection": "threshold",
                 "threshold": threshold,
+                "top_n": None,
                 "signal_count": int(len(signal)),
                 "coverage": float(len(signal) / len(part)) if len(part) else 0.0,
                 f"{metric_prefix}_precision": float(signal[label_col].mean()) if len(signal) else None,
                 f"{metric_prefix}_base_rate": float(part[label_col].mean()) if len(part) else None,
-                "avg_future_ret_15d": float(signal["future_ret_15d"].mean()) if len(signal) else None,
-                "avg_future_mfe_15d": float(signal["future_mfe_15d"].mean()) if len(signal) else None,
-                "avg_future_mae_15d": float(signal["future_mae_15d"].mean()) if len(signal) else None,
-                "quality_bottom_rate": float(signal["quality_bottom_label"].mean())
-                if len(signal) and "quality_bottom_label" in signal
-                else None,
-                "continuation_risk_rate": float(signal["continuation_risk_label"].mean())
-                if len(signal) and "continuation_risk_label" in signal
-                else None,
+                **_signal_classification_metrics(part, signal, label_col),
+                **_signal_outcome_metrics(signal),
+            }
+        )
+    return rows
+
+
+def _topn_rows(
+    part: pd.DataFrame,
+    label_col: str,
+    proba_col: str,
+    top_ns: list[int],
+    metric_prefix: str,
+) -> list[dict]:
+    rows = []
+    ranked = part.sort_values(proba_col, ascending=False)
+    for top_n in top_ns:
+        actual_n = min(int(top_n), len(ranked))
+        signal = ranked.head(actual_n)
+        rows.append(
+            {
+                "selection": "top_n",
+                "threshold": None,
+                "top_n": top_n,
+                "signal_count": int(len(signal)),
+                "coverage": float(len(signal) / len(part)) if len(part) else 0.0,
+                f"{metric_prefix}_precision": float(signal[label_col].mean()) if len(signal) else None,
+                f"{metric_prefix}_base_rate": float(part[label_col].mean()) if len(part) else None,
+                **_signal_classification_metrics(part, signal, label_col),
+                **_signal_outcome_metrics(signal),
             }
         )
     return rows
@@ -675,7 +927,9 @@ def train_manual_turning_models(
                 "average_precision": _safe_ap(y_true, proba),
                 **_tuning_metric_fields(tuning_info),
             }
-            metrics_rows.append({**base, "threshold": None, "signal_count": None, "coverage": None})
+            metrics_rows.append(
+                {**base, "selection": None, "threshold": None, "top_n": None, "signal_count": None, "coverage": None}
+            )
             for threshold_row in _threshold_rows(
                 part,
                 label_col,
@@ -684,6 +938,8 @@ def train_manual_turning_models(
                 side,
             ):
                 metrics_rows.append({**base, **threshold_row})
+            for topn_row in _topn_rows(part, label_col, proba_col, [5, 10, 20, 40], side):
+                metrics_rows.append({**base, **topn_row})
 
     prediction["weak_combined_bottom_signal"] = (
         (prediction["manual_weak_bottom_proba"] >= 0.6)
@@ -831,7 +1087,9 @@ def walk_forward_manual_turning_models(
                 "average_precision": _safe_ap(y_true, proba),
                 **_tuning_metric_fields(tuning_info),
             }
-            metric_rows.append({**base, "threshold": None, "signal_count": None, "coverage": None})
+            metric_rows.append(
+                {**base, "selection": None, "threshold": None, "top_n": None, "signal_count": None, "coverage": None}
+            )
             for threshold_row in _threshold_rows(
                 pd.concat([test.reset_index(drop=True), fold[[proba_col]].reset_index(drop=True)], axis=1),
                 label_col,
@@ -840,6 +1098,9 @@ def walk_forward_manual_turning_models(
                 side,
             ):
                 metric_rows.append({**base, **threshold_row})
+            eval_part = pd.concat([test.reset_index(drop=True), fold[[proba_col]].reset_index(drop=True)], axis=1)
+            for topn_row in _topn_rows(eval_part, label_col, proba_col, [5, 10, 20, 40], side):
+                metric_rows.append({**base, **topn_row})
 
         fold["weak_combined_bottom_signal"] = (
             (fold["manual_weak_bottom_proba"] >= 0.6)
@@ -873,8 +1134,29 @@ def main() -> None:
         "--model-kind",
         choices=[
             "logistic",
+            "l1_logistic",
+            "l1-logistic",
+            "l1_logistic_var",
+            "l1-logistic-var",
+            "l1_logistic_kbest",
+            "l1-logistic-kbest",
+            "gam",
+            "spline_gam",
+            "spline-gam",
+            "lda",
+            "linear_discriminant_analysis",
+            "linear-discriminant-analysis",
+            "qda",
+            "quadratic_discriminant_analysis",
+            "quadratic-discriminant-analysis",
+            "svm",
+            "svc",
+            "support_vector_machine",
+            "support-vector-machine",
             "lightgbm",
             "xgboost",
+            "xgboost_small",
+            "xgboost-small",
             "xboost",
             "bp",
             "bpnn",
