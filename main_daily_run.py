@@ -12,21 +12,15 @@ from src.common.config import get_config
 from src.common.db import init_database
 from src.common.logger import get_logger
 from src.common.network import disable_env_proxies
-from src.analysis.build_bottom_weekly_evaluation_html import build_bottom_weekly_evaluation_html
-from src.analysis.build_bottom_weekly_signal_html import build_bottom_weekly_signal_html
 from src.features.build_market_features import build_market_features
 from src.features.build_model_dataset import build_model_dataset
-from src.features.build_bottom_weekly_dataset import build_bottom_weekly_dataset
 from src.features.build_sentiment_features import build_sentiment_features
 from src.llm.extract_event import extract_events_for_recent_news
-from src.modeling.optimize_bottom_weekly_signal_policy import optimize_bottom_weekly_signal_policy
 from src.modeling.predict import predict
 from src.modeling.generate_buy_signal import generate_buy_signals
-from src.modeling.train_bottom_weekly_final_models import train_bottom_weekly_final_models
 from src.modeling.train_buy_lgbm import train_buy_models
 from src.modeling.train_final_buy_model import train_final_buy_model
 from src.modeling.train_lgbm import train_models
-from src.modeling.walk_forward_bottom_weekly_lgbm import walk_forward_bottom_weekly_evaluation
 from src.report.generate_html_report import generate_html_report
 from src.report.generate_buy_signal_report import generate_buy_signal_report
 
@@ -44,12 +38,6 @@ STEPS = {
     "build_sentiment_features": build_sentiment_features,
     "extract_events": extract_events_for_recent_news,
     "build_dataset": build_model_dataset,
-    "build_bottom_weekly_dataset": build_bottom_weekly_dataset,
-    "evaluate_bottom_weekly": walk_forward_bottom_weekly_evaluation,
-    "train_bottom_weekly_final": train_bottom_weekly_final_models,
-    "optimize_bottom_weekly_policy": optimize_bottom_weekly_signal_policy,
-    "build_bottom_weekly_html": build_bottom_weekly_evaluation_html,
-    "build_bottom_weekly_signal_html": build_bottom_weekly_signal_html,
     "train": train_models,
     "train_buy": train_buy_models,
     "train_buy_final": train_final_buy_model,
