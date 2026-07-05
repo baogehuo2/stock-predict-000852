@@ -12,6 +12,20 @@ indices:
   - code: "000688"
     name: 科创50
 
+style_indices_v2:
+  - code: "932000"
+    name: 中证2000
+    provider: csindex
+  - code: "000016"
+    name: 上证50
+    provider: csindex
+  - code: "000985"
+    name: 中证全指
+    provider: csindex
+  - code: "399303"
+    name: 国证2000
+    provider: cni
+
 etfs:
   - code: "159845"
     name: 中证1000ETF华夏

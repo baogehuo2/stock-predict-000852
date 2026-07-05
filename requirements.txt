@@ -1,19 +1,39 @@
+# Python 3.10+
+
+# Dataframe and numeric processing
 pandas>=2.0
 numpy>=1.24
+
+# MySQL storage
 SQLAlchemy>=2.0
 PyMySQL>=1.1
+
+# Config and secrets
 PyYAML>=6.0
 cryptography>=39.0
+
+# HTTP and HTML parsing
 requests>=2.31
 beautifulsoup4>=4.12
+
+# Market data sources
 akshare>=1.13
+tushare>=1.4.29
+minishare>=0.1007.0
+
+# Modeling and reports
 scikit-learn>=1.3
 lightgbm>=4.0
 xgboost>=3.2
 torch>=1.12
 jinja2>=3.1
 matplotlib>=3.7
+
+# File/PDF parsing used by source probes
 openpyxl>=3.1
+pdfplumber>=0.11,<0.12
+
+# Browser-based Guba collection and captcha handling
 playwright>=1.40
 opencv-python>=4.8
 captcha-recognizer>=1.0.2

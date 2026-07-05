@@ -1,0 +1,93 @@
+from __future__ import annotations
+
+import argparse
+
+from src.collectors.collect_calendar_daily_v2 import collect_calendar_daily
+from src.collectors.collect_event_calendar_v2 import collect_event_calendar
+from src.collectors.collect_event_raw_v4 import collect_event_raw_v4
+from src.collectors.collect_etf_akshare import collect_etfs
+from src.collectors.collect_futures_akshare import collect_futures
+from src.collectors.collect_global_market_v2 import collect_global_market
+from src.collectors.collect_guba_eastmoney import collect_guba
+from src.collectors.collect_index_akshare import collect_indices
+from src.collectors.collect_macro_forecast_calendar_v2 import collect_macro_forecast_calendar
+from src.collectors.collect_macro_release_v2 import collect_macro_release
+from src.collectors.collect_macro_release_time_reference_v2 import collect_macro_release_time_reference
+from src.collectors.collect_market_index_periodic_v25 import collect_market_index_periodic
+from src.collectors.collect_news import collect_news
+from src.collectors.collect_zz1000_history_tushare import collect_history_backfill
+from src.collectors.collect_zz1000_snapshot_v2 import collect_current_snapshot
+from src.common.config import ensure_project_dirs
+from src.common.db import init_database
+from src.common.logger import get_logger
+from src.common.network import disable_env_proxies
+from src.llm.extract_event import extract_events_for_recent_news
+
+
+logger = get_logger(__name__)
+
+STEPS = {
+    "init_db": init_database,
+    "collect_index": collect_indices,
+    "collect_etf": collect_etfs,
+    "collect_futures": collect_futures,
+    "collect_guba": collect_guba,
+    "collect_news": collect_news,
+    "collect_zz1000_snapshot": collect_current_snapshot,
+    "collect_zz1000_history_backfill": collect_history_backfill,
+    "collect_calendar_daily_v2": collect_calendar_daily,
+    "collect_event_calendar_v2": collect_event_calendar,
+    "collect_event_raw_v4": collect_event_raw_v4,
+    "collect_macro_forecast_calendar_v2": collect_macro_forecast_calendar,
+    "collect_macro_release_time_reference_v2": collect_macro_release_time_reference,
+    "collect_macro_release_v2": collect_macro_release,
+    "collect_global_market_v2": collect_global_market,
+    "collect_market_index_periodic_v25": collect_market_index_periodic,
+    "extract_events": extract_events_for_recent_news,
+}
+
+DEFAULT_FLOW = [
+    "init_db",
+    "collect_index",
+    "collect_etf",
+    "collect_futures",
+    "collect_guba",
+    "collect_news",
+    "collect_zz1000_snapshot",
+    "collect_zz1000_history_backfill",
+    "collect_calendar_daily_v2",
+    "collect_event_calendar_v2",
+    "collect_event_raw_v4",
+    "collect_macro_forecast_calendar_v2",
+    "collect_macro_release_time_reference_v2",
+    "collect_macro_release_v2",
+    "collect_global_market_v2",
+    "collect_market_index_periodic_v25",
+    "extract_events",
+]
+
+
+def run_steps(steps: list[str], continue_on_error: bool = True) -> None:
+    ensure_project_dirs()
+    for step in steps:
+        logger.info("start data_collector step=%s", step)
+        try:
+            result = STEPS[step]()
+            logger.info("finish data_collector step=%s result=%s", step, result)
+        except Exception:
+            logger.exception("failed data_collector step=%s", step)
+            if not continue_on_error or step == "extract_events":
+                raise
+
+
+def main() -> None:
+    disable_env_proxies()
+    parser = argparse.ArgumentParser(description="Run data collector pipeline.")
+    parser.add_argument("--step", choices=sorted(STEPS), action="append", help="Run one or more specific steps.")
+    parser.add_argument("--stop-on-error", action="store_true")
+    args = parser.parse_args()
+    run_steps(args.step or DEFAULT_FLOW, continue_on_error=not args.stop_on_error)
+
+
+if __name__ == "__main__":
+    main()

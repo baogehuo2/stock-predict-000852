@@ -50,6 +50,37 @@ def _safe_int(value: str | int | None) -> int | None:
         return None
 
 
+def _hash_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def enrich_row_metadata(row: dict) -> dict:
+    publish_time = row.get("publish_time")
+    crawl_time = row.get("crawl_time") or datetime.now()
+    available_time = publish_time or crawl_time
+    title = str(row.get("title") or "")
+    content = str(row.get("content") or "")
+    author = str(row.get("author") or "")
+    row["crawl_time"] = crawl_time
+    row["available_time"] = available_time
+    row["raw_hash"] = _hash_text(
+        "|".join(
+            [
+                str(row.get("post_id") or ""),
+                str(row.get("source") or ""),
+                str(row.get("bar_name") or ""),
+                str(publish_time or ""),
+                title,
+                content,
+                str(row.get("url") or ""),
+            ]
+        )
+    )
+    row["content_hash"] = _hash_text(f"{title}|{content}")
+    row["author_id_hash"] = _hash_text(author) if author else None
+    return row
+
+
 def fetch_guba_detail(url: str) -> dict:
     if "guba.eastmoney.com/news," not in url:
         return {}
@@ -133,12 +164,13 @@ def parse_guba_page(bar_name: str, base_url: str, page: int, fetch_detail: bool 
                     time.sleep(detail_sleep)
             except Exception as exc:
                 logger.warning("failed to fetch guba detail url=%s error=%s", full_url, exc)
+        row = enrich_row_metadata(row)
         rows.append(row)
     dedup = {row["post_id"]: row for row in rows}
     return list(dedup.values())
 
 
-def collect_guba(pages: int | None = None) -> int:
+def collect_guba(pages: int | None = None, fetch_detail: bool = True, detail_sleep: float = 0.2) -> int:
     cfg = get_config()
     pages = pages or int(cfg.get("sentiment", {}).get("guba_pages", 5))
     bars = load_yaml(project_path("config", "symbols.yaml"))["guba_bars"]
@@ -146,7 +178,13 @@ def collect_guba(pages: int | None = None) -> int:
     for bar in bars:
         for page in range(1, pages + 1):
             try:
-                rows = parse_guba_page(bar["bar_name"], bar["url"], page)
+                rows = parse_guba_page(
+                    bar["bar_name"],
+                    bar["url"],
+                    page,
+                    fetch_detail=fetch_detail,
+                    detail_sleep=detail_sleep,
+                )
                 all_rows.extend(rows)
                 logger.info("collected guba bar=%s page=%s rows=%s", bar["bar_name"], page, len(rows))
             except Exception as exc:
@@ -160,8 +198,10 @@ def collect_guba(pages: int | None = None) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--pages", type=int)
+    parser.add_argument("--no-detail", action="store_true")
+    parser.add_argument("--detail-sleep", type=float, default=0.2)
     args = parser.parse_args()
-    print(collect_guba(args.pages))
+    print(collect_guba(args.pages, fetch_detail=not args.no_detail, detail_sleep=args.detail_sleep))
 
 
 if __name__ == "__main__":
