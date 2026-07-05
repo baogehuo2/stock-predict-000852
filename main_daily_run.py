@@ -18,7 +18,6 @@ from src.collectors.collect_news import collect_news
 from src.collectors.collect_zz1000_history_tushare import collect_history_backfill
 from src.collectors.collect_zz1000_snapshot_v2 import collect_current_snapshot
 from src.common.config import ensure_project_dirs
-from src.common.config import get_config
 from src.common.db import init_database
 from src.common.logger import get_logger
 from src.common.network import disable_env_proxies
@@ -26,14 +25,6 @@ from src.llm.extract_event import extract_events_for_recent_news
 
 
 logger = get_logger(__name__)
-
-
-def _lazy_call(module_path: str, function_name: str):
-    def _runner():
-        module = __import__(module_path, fromlist=[function_name])
-        return getattr(module, function_name)()
-
-    return _runner
 
 STEPS = {
     "init_db": init_database,
@@ -52,13 +43,7 @@ STEPS = {
     "collect_macro_release_v2": collect_macro_release,
     "collect_global_market_v2": collect_global_market,
     "collect_market_index_periodic_v25": collect_market_index_periodic,
-    "build_market_features": _lazy_call("src.features.build_market_features", "build_market_features"),
-    "build_sentiment_features": _lazy_call("src.features.build_sentiment_features", "build_sentiment_features"),
     "extract_events": extract_events_for_recent_news,
-    "build_dataset": _lazy_call("src.features.build_model_dataset", "build_model_dataset"),
-    "train": _lazy_call("src.modeling.train_lgbm", "train_models"),
-    "predict": _lazy_call("src.modeling.predict", "predict"),
-    "report": _lazy_call("src.report.generate_html_report", "generate_html_report"),
 }
 
 DEFAULT_FLOW = [
@@ -78,24 +63,13 @@ DEFAULT_FLOW = [
     "collect_macro_release_v2",
     "collect_global_market_v2",
     "collect_market_index_periodic_v25",
-    "build_market_features",
-    "build_sentiment_features",
     "extract_events",
-    "build_dataset",
-    "train",
-    "predict",
-    "report",
 ]
 
 
 def run_steps(steps: list[str], continue_on_error: bool = True) -> None:
     ensure_project_dirs()
-    cfg = get_config()
-    use_guba_sentiment = bool(cfg.get("features", {}).get("use_guba_sentiment", False))
     for step in steps:
-        if step == "build_sentiment_features" and not use_guba_sentiment:
-            logger.info("skip step=%s because features.use_guba_sentiment=false", step)
-            continue
         logger.info("start step=%s", step)
         try:
             result = STEPS[step]()
@@ -108,7 +82,7 @@ def run_steps(steps: list[str], continue_on_error: bool = True) -> None:
 
 def main() -> None:
     disable_env_proxies()
-    parser = argparse.ArgumentParser(description="Run zz1000 daily pipeline.")
+    parser = argparse.ArgumentParser(description="Run data collector pipeline.")
     parser.add_argument("--step", choices=sorted(STEPS), action="append", help="Run one or more specific steps.")
     parser.add_argument("--stop-on-error", action="store_true")
     args = parser.parse_args()
