@@ -9,6 +9,14 @@ import numpy as np
 import pandas as pd
 
 from src.features.build_bottom_dataset import add_bottom_labels, build_causal_weekly_features
+from src.features.build_bottom_weekly_dataset import (
+    add_manual_weekly_labels,
+    apply_auto_future_return_labels,
+    build_monthly_state_features,
+    build_weekly_event_features,
+    build_weekly_feature_frame,
+    build_weekly_market_bars,
+)
 from src.features.build_manual_turning_labels import build_manual_turning_daily
 from src.modeling.build_optimized_turning_signals import (
     select_optimized_bottom_signals,
@@ -19,6 +27,13 @@ from src.modeling.turning_signal_postprocess import (
     compress_top_signal_regions,
 )
 from src.modeling.walk_forward_bottom_lgbm import _non_overlapping
+from src.modeling.walk_forward_bottom_weekly_lgbm import (
+    _balanced_resample,
+    _fit_model,
+    _negative_bagging_fraction,
+    _positive_probability,
+    _positive_weight,
+)
 
 
 class BottomLabelTests(unittest.TestCase):
@@ -99,6 +114,232 @@ class BottomLabelTests(unittest.TestCase):
             if pd.isna(left) and pd.isna(right):
                 continue
             self.assertAlmostEqual(float(left), float(right), places=12, msg=column)
+
+    def test_weekly_volume_features_use_average_daily_volume(self) -> None:
+        dates = pd.to_datetime(
+            [
+                "2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05",
+                "2024-01-08", "2024-01-09", "2024-01-10", "2024-01-11", "2024-01-12",
+                "2024-01-15", "2024-01-16", "2024-01-17", "2024-01-18", "2024-01-19",
+                "2024-01-22", "2024-01-23", "2024-01-24", "2024-01-25", "2024-01-26",
+                "2024-01-29", "2024-01-30", "2024-01-31", "2024-02-01", "2024-02-02",
+                "2024-02-05", "2024-02-06", "2024-02-07", "2024-02-08",
+            ]
+        )
+        rows = []
+        close = 100.0
+        for date in dates:
+            close += 0.5
+            rows.append(
+                {
+                    "trade_date": date,
+                    "index_code": "000852",
+                    "open": close - 0.2,
+                    "high": close + 0.5,
+                    "low": close - 0.5,
+                    "close": close,
+                    "volume": 1000.0,
+                }
+            )
+        daily = pd.DataFrame(rows)
+        weekly = build_weekly_market_bars(daily)
+        cfg = {
+            "candidate": {
+                "volume_expand_ratio": 1.2,
+                "bottom_min_conditions": 2,
+                "top_min_conditions": 2,
+                "bottom_drawdown_13w": -0.08,
+                "bottom_boll_position": 0.20,
+                "bottom_rsi6": 35.0,
+                "bottom_kdj_j": 20.0,
+                "top_runup_13w": 0.12,
+                "top_boll_position": 0.80,
+                "top_rsi6": 70.0,
+                "top_kdj_j": 85.0,
+            }
+        }
+
+        features = build_weekly_feature_frame(weekly, weekly, cfg)
+
+        self.assertEqual(weekly["trade_days"].tolist(), [5, 5, 5, 5, 5, 4])
+        self.assertEqual(weekly["volume"].tolist()[-2:], [5000.0, 4000.0])
+        self.assertEqual(weekly["avg_daily_volume"].tolist()[-2:], [1000.0, 1000.0])
+        self.assertAlmostEqual(features.loc[5, "week_avg_daily_volume_ratio_5w"], 1.0)
+        self.assertAlmostEqual(features.loc[5, "week_close_position"], (114.5 - 112.5) / (115.0 - 112.5))
+        self.assertAlmostEqual(features.loc[5, "week_open_position"], (112.8 - 112.5) / (115.0 - 112.5))
+        self.assertAlmostEqual(features.loc[5, "week_close_to_low"], 114.5 / 112.5 - 1)
+        self.assertAlmostEqual(features.loc[5, "week_high_to_close"], 115.0 / 114.5 - 1)
+
+    def test_manual_weekly_labels_overlap_week_ranges(self) -> None:
+        weeks = pd.DataFrame(
+            {
+                "week_start_date": pd.to_datetime(["2024-01-01", "2024-01-08"]),
+                "week_end_date": pd.to_datetime(["2024-01-05", "2024-01-12"]),
+            }
+        )
+        regions = pd.DataFrame(
+            {
+                "region_id": ["B202401"],
+                "start_date": pd.to_datetime(["2024-01-03"]),
+                "end_date": pd.to_datetime(["2024-01-10"]),
+                "region_type": ["bottom"],
+                "cycle": ["medium"],
+                "level": ["swing"],
+                "label_freq": ["weekly"],
+                "confidence": [2],
+                "usable_for_signal": [1],
+                "entry_start": pd.to_datetime(["2024-01-05"]),
+                "entry_end": pd.to_datetime(["2024-01-08"]),
+                "exit_start": [pd.NaT],
+                "exit_end": [pd.NaT],
+                "reason": [""],
+                "notes": [""],
+            }
+        )
+        cfg = {"manual_labels": {"label_mode": "post_hoc_weekly_weak"}}
+
+        labeled = add_manual_weekly_labels(weeks, regions, cfg)
+
+        self.assertEqual(labeled["is_manual_bottom_region"].tolist(), [1, 1])
+        self.assertEqual(labeled["manual_weak_bottom_label"].tolist(), [1, 1])
+        self.assertEqual(labeled["bottom_level_score"].tolist(), [4.0, 4.0])
+
+    def test_auto_future_return_weekly_labels_use_three_week_thresholds(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "future_ret_3w": [0.051, 0.050, -0.051, -0.050, np.nan],
+                "manual_weak_bottom_label": [0, 0, 0, 0, 1],
+                "manual_weak_top_label": [0, 0, 0, 0, 1],
+                "label_mode": ["manual"] * 5,
+                "manual_state": ["neutral"] * 5,
+            }
+        )
+        cfg = {
+            "model": {"horizon_weeks": 3},
+            "manual_labels": {
+                "label_source": "auto_future_return",
+                "label_mode": "auto_future_return_3w_5pct",
+                "auto_bottom_return_threshold": 0.05,
+                "auto_top_return_threshold": -0.05,
+            },
+        }
+
+        labeled = apply_auto_future_return_labels(frame, cfg)
+
+        self.assertEqual(labeled["manual_weak_bottom_label"].tolist(), [1, 0, 0, 0, 0])
+        self.assertEqual(labeled["manual_weak_top_label"].tolist(), [0, 0, 1, 0, 0])
+        self.assertEqual(
+            labeled["manual_state"].tolist(),
+            ["bottom", "neutral", "top", "neutral", "neutral"],
+        )
+        self.assertEqual(set(labeled["label_mode"]), {"auto_future_return_3w_5pct"})
+
+    def test_monthly_state_features_only_use_days_available_by_week_end(self) -> None:
+        dates = pd.bdate_range("2023-01-02", "2024-04-30")
+        close = 100.0
+        rows = []
+        for date in dates:
+            close += 0.2
+            if date > pd.Timestamp("2024-04-12"):
+                close += 10.0
+            rows.append(
+                {
+                    "trade_date": date,
+                    "index_code": "000852",
+                    "open": close - 0.2,
+                    "high": close + 0.5,
+                    "low": close - 0.5,
+                    "close": close,
+                    "volume": 1000.0,
+                }
+            )
+        daily = pd.DataFrame(rows)
+        weekly = pd.DataFrame({"week_end_date": pd.to_datetime(["2024-04-12", "2024-04-26"])})
+
+        features = build_monthly_state_features(daily, weekly)
+
+        first = features.iloc[0]
+        second = features.iloc[1]
+        available = daily[daily["trade_date"] <= pd.Timestamp("2024-04-12")]
+        april = available[available["trade_date"].dt.to_period("M") == pd.Period("2024-04")]
+        expected_position = (
+            april["close"].iloc[-1] - april["low"].min()
+        ) / (april["high"].max() - april["low"].min())
+
+        self.assertAlmostEqual(first["month_close_position"], expected_position)
+        self.assertLess(first["month_ret_1m"], second["month_ret_1m"])
+
+    def test_weekly_event_features_only_use_current_week_events(self) -> None:
+        weeks = pd.DataFrame(
+            {
+                "week_start_date": pd.to_datetime(["2024-01-01", "2024-01-08"]),
+                "week_end_date": pd.to_datetime(["2024-01-05", "2024-01-12"]),
+            }
+        )
+        events = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2024-01-05", "2024-01-08"]),
+                "event_type": ["政策", "宏观"],
+                "event_stage": ["确认", "确认"],
+                "expectation_level": ["中性", "中性"],
+                "surprise_level": ["符合预期", "符合预期"],
+                "affected_style": ["小盘", "成长"],
+                "impact_direction": ["利多", "利空"],
+                "impact_strength": [2, 3],
+                "event_score": [2.0, -3.0],
+            }
+        )
+
+        features = build_weekly_event_features(weeks, events)
+
+        self.assertEqual(features["f_event_week_all_count"].tolist(), [1.0, 1.0])
+        self.assertEqual(features["f_event_week_all_score_sum"].tolist(), [2.0, -3.0])
+        self.assertEqual(features["f_event_week_policy_count"].tolist(), [1.0, 0.0])
+        self.assertEqual(features["f_event_week_macro_count"].tolist(), [0.0, 1.0])
+
+    def test_weekly_imbalance_helpers_cap_weight_and_resample_negatives(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "week_pos": range(20),
+                "label": [1, 1, *([0] * 18)],
+                "feature": np.arange(20, dtype=float),
+            }
+        )
+        imbalance = {
+            "enabled": True,
+            "max_scale_pos_weight": 5.0,
+            "negative_sample_ratio": 3.0,
+        }
+
+        weight = _positive_weight(frame["label"], imbalance)
+        bagging_fraction = _negative_bagging_fraction(frame["label"], imbalance, {})
+        sampled = _balanced_resample(frame, "label", negative_ratio=3.0, random_state=42)
+
+        self.assertEqual(weight, 5.0)
+        self.assertAlmostEqual(bagging_fraction, 6 / 18)
+        self.assertEqual(int((sampled["label"] == 1).sum()), 2)
+        self.assertEqual(int((sampled["label"] == 0).sum()), 6)
+
+    def test_weekly_lda_qda_models_fit_and_predict_probability(self) -> None:
+        rng = np.random.default_rng(42)
+        frame = pd.DataFrame(
+            {
+                "f_a": rng.normal(size=60),
+                "f_b": rng.normal(size=60),
+                "f_c": rng.normal(size=60),
+            }
+        )
+        frame["label"] = ((frame["f_a"] + frame["f_b"] * 0.5) > 0).astype(int)
+        features = ["f_a", "f_b", "f_c"]
+
+        for model_name, params in [
+            ("lda", {"solver": "lsqr", "shrinkage": "auto"}),
+            ("qda", {"reg_param": 0.50}),
+        ]:
+            model, usable = _fit_model(model_name, frame, features, "label", 42, params)
+            proba = _positive_probability(model, frame, usable)
+            self.assertEqual(len(proba), len(frame))
+            self.assertTrue(np.all((proba >= 0) & (proba <= 1)))
 
     def test_manual_labels_are_marked_as_weak(self) -> None:
         regions = pd.DataFrame(

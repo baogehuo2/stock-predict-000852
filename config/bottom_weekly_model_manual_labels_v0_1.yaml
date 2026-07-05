@@ -1,0 +1,69 @@
+database:
+  expected_name: zz1000_botumn
+
+model:
+  model_version: bottom-weekly-v0.1-manual
+  feature_version: bottom-weekly-features-v0.1
+  model_tag: bottom_weekly_v0_1_3w_manual
+  target_index: "000852"
+  horizon_weeks: 3
+  train_start: "2015-01-01"
+  evaluation_start_year: 2021
+  random_state: 42
+  min_train_rows: 80
+  probability_thresholds: [0.30, 0.40, 0.50, 0.60, 0.70]
+  model_kinds: [logistic, lda, qda, lightgbm, bp, mlp, svm]
+  enable_tuning: true
+  tuning_validation_fraction: 0.20
+  tuning_min_validation_rows: 20
+  tuning_min_signal_count: 2
+  signal_html_threshold: 0.30
+  imbalance:
+    enabled: true
+    max_scale_pos_weight: 80.0
+    negative_sample_ratio: 3.0
+    lightgbm_is_unbalance: true
+    lightgbm_balanced_bagging: true
+    bp_use_focal_loss: true
+    bp_focal_gamma: 2.0
+    bp_focal_alpha: 0.75
+
+manual_labels:
+  label_mode: post_hoc_weekly_weak
+  label_source: manual
+  auto_bottom_return_threshold: 0.05
+  auto_top_return_threshold: -0.05
+  files:
+    "000852": data/manual_labels/market_turning_regions_weekly_zz1000.csv
+    "000300": data/manual_labels/market_turning_regions_weekly_hs300.csv
+
+candidate:
+  bottom_min_conditions: 2
+  top_min_conditions: 2
+  bottom_drawdown_13w: -0.08
+  bottom_boll_position: 0.20
+  bottom_rsi6: 35.0
+  bottom_kdj_j: 20.0
+  top_runup_13w: 0.12
+  top_boll_position: 0.80
+  top_rsi6: 70.0
+  top_kdj_j: 85.0
+  volume_expand_ratio: 1.20
+
+features:
+  manifest: config/bottom_weekly_features_v0_1.json
+
+feature_augments:
+  use_event_weekly_features: true
+
+outputs:
+  dataset_table: bottom_model_dataset_weekly_manual
+  walk_forward_detail: data/reports/bottom_weekly_manual_walk_forward_v0_1_3w_details.csv
+  walk_forward_summary: data/reports/bottom_weekly_manual_walk_forward_v0_1_3w_summary.csv
+  walk_forward_aggregate: data/reports/bottom_weekly_manual_walk_forward_v0_1_3w_aggregate.csv
+  tuning_report: data/reports/bottom_weekly_manual_walk_forward_v0_1_3w_tuning.csv
+  walk_forward_html: data/reports/bottom_weekly_manual_walk_forward_v0_1_3w.html
+  signal_html: data/reports/bottom_weekly_manual_signal_kline_v0_1_3w.html
+  optimized_policy_report: data/reports/bottom_weekly_manual_optimized_signal_policy_v0_1_3w.csv
+  final_model_dir: models/bottom_weekly_v0_1_3w_manual
+  final_model_manifest: models/bottom_weekly_v0_1_3w_manual/final_models_manifest.csv
