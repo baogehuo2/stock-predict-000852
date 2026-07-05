@@ -47,6 +47,12 @@ def _keyword_groups_from_config(cfg: dict) -> dict[str, list[str]]:
     return {"legacy": [str(keyword) for keyword in keywords]}
 
 
+def _parse_groups(value: str | None, fallback: list[str]) -> list[str]:
+    if not value:
+        return fallback
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 def _match_keyword_groups(text: str, keyword_groups: dict[str, list[str]]) -> tuple[list[str], list[str]]:
     matched_keywords: list[str] = []
     matched_groups: list[str] = []
@@ -174,6 +180,12 @@ def collect_news_history(
     keyword_mode: str = "match",
     sleep_seconds: float = 0.5,
     batch_days: int = 10,
+    extract_events: bool = False,
+    event_priority_groups: list[str] | None = None,
+    event_limit_per_day: int | None = 0,
+    event_batch_size: int = 20,
+    llm_retries: int = 3,
+    retry_wait: float = 10.0,
 ) -> int:
     cfg = get_config()
     keyword_groups = _keyword_groups_from_config(cfg)
@@ -204,6 +216,30 @@ def collect_news_history(
     if buffer:
         total += upsert_dataframe(pd.DataFrame(buffer), "news_raw", ["news_id"])
     logger.info("finish news history total=%s", total)
+    if extract_events:
+        from src.llm.extract_event import audit_missing_priority_news, extract_events_for_history
+
+        priority_groups = event_priority_groups or list(keyword_groups.keys())
+        logger.info(
+            "start event extraction from collector start=%s end=%s limit_per_day=%s priority_groups=%s",
+            start_date,
+            end_date,
+            event_limit_per_day,
+            priority_groups,
+        )
+        extracted = extract_events_for_history(
+            start_date=start_date,
+            end_date=end_date,
+            limit_per_day=event_limit_per_day,
+            batch_size=event_batch_size,
+            include_unmatched=keyword_mode == "all",
+            fail_fast=False,
+            llm_retries=llm_retries,
+            retry_wait=retry_wait,
+            priority_groups=priority_groups,
+        )
+        missing = audit_missing_priority_news(start_date, end_date, priority_groups)
+        logger.info("finish event extraction extracted=%s missing_priority=%s", extracted, missing)
     return total
 
 
@@ -215,7 +251,23 @@ def main() -> None:
     parser.add_argument("--keyword-mode", choices=["match", "all"], default="match", help="match: keep only configured keywords; all: keep all rows.")
     parser.add_argument("--sleep", type=float, default=0.5)
     parser.add_argument("--batch-days", type=int, default=10)
+    parser.add_argument("--extract-events", action="store_true", help="Run event extraction after collection using the same date range.")
+    parser.add_argument(
+        "--event-priority-groups",
+        help="Comma-separated priority groups for extraction. Defaults to all configured news.keyword_groups.",
+    )
+    parser.add_argument(
+        "--event-limit-per-day",
+        type=int,
+        default=0,
+        help="Daily extraction cap. Use 0 for no daily cap so matched priority news is not dropped.",
+    )
+    parser.add_argument("--event-batch-size", type=int, default=20)
+    parser.add_argument("--llm-retries", type=int, default=3)
+    parser.add_argument("--retry-wait", type=float, default=10.0)
     args = parser.parse_args()
+    cfg = get_config()
+    keyword_groups = _keyword_groups_from_config(cfg)
     print(
         collect_news_history(
             start_date=args.start_date,
@@ -224,6 +276,12 @@ def main() -> None:
             keyword_mode=args.keyword_mode,
             sleep_seconds=args.sleep,
             batch_days=args.batch_days,
+            extract_events=args.extract_events,
+            event_priority_groups=_parse_groups(args.event_priority_groups, list(keyword_groups.keys())),
+            event_limit_per_day=args.event_limit_per_day,
+            event_batch_size=args.event_batch_size,
+            llm_retries=args.llm_retries,
+            retry_wait=args.retry_wait,
         )
     )
 

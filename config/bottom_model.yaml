@@ -1,0 +1,87 @@
+database:
+  expected_name: zz1000_botumn
+
+model:
+  model_version: bottom-fishing-v0.3
+  feature_version: bottom-features-v0.2
+  model_tag: bottom_v0_3_15d
+  target_index: "000852"
+  horizon: 15
+  train_start: "2015-01-01"
+  evaluation_start_year: 2021
+  random_state: 42
+  min_train_rows: 120
+  probability_thresholds: [0.50, 0.60, 0.70]
+  risk_thresholds: [0.30, 0.40, 0.50]
+
+manual_models:
+  label_mode: post_hoc_weak
+  train_start: "2016-01-01"
+  train_end: "2019-12-31"
+  valid_start: "2020-01-01"
+  valid_end: "2021-12-31"
+  oot_start: "2022-01-01"
+  probability_thresholds: [0.40, 0.50, 0.60, 0.70]
+  bottom_model_file: models/manual_weak_bottom_zone_v0_1.joblib
+  top_model_file: models/manual_weak_top_zone_v0_1.joblib
+  optimized:
+    bottom_source: walk_forward
+    bottom_model_kind: lightgbm
+    bottom_watch_threshold: 0.50
+    bottom_threshold: 0.70
+    bottom_top_veto_threshold: 0.50
+    bottom_risk_threshold: 0.45
+    bottom_week_kdj_min: -10.0
+    top_source: anchored
+    top_model_kind: lightgbm
+    top_threshold: 0.60
+    top_bottom_veto_threshold: 0.30
+
+candidate:
+  min_conditions: 2
+  drawdown_20d: -0.04
+  drawdown_60d: -0.07
+  rsi6: 30.0
+  boll_position: 0.15
+  wr14: -80.0
+  below_ma20_days: 5
+  ma20_gap: -0.03
+  ret_3d: -0.025
+  volatility_expand: 1.20
+
+labels:
+  terminal_return: 0.01
+  rebound_target: 0.025
+  quality_terminal_return: 0.005
+  quality_max_adverse_excursion: -0.015
+  path_max_adverse_excursion: -0.02
+  continuation_risk: -0.025
+
+features:
+  manifest: config/bottom_features_v0_2.json
+
+feature_augments:
+  use_buy_v1_features: true
+  buy_v1_manifest: config/buy_features_v1.json
+  use_event_v2_features: false
+
+outputs:
+  dataset_table: bottom_model_dataset_daily
+  manual_region_file: data/manual_labels/market_turning_regions.csv
+  manual_daily_table: manual_turning_region_daily
+  manual_region_report: data/reports/manual_turning_region_summary.csv
+  manual_model_metrics: data/reports/manual_weak_turning_model_metrics.csv
+  manual_model_predictions: data/reports/manual_weak_turning_model_predictions.csv
+  manual_combined_signals: data/reports/manual_weak_turning_combined_signals.csv
+  manual_walk_forward_metrics: data/reports/manual_weak_turning_walk_forward_metrics.csv
+  manual_walk_forward_predictions: data/reports/manual_weak_turning_walk_forward_predictions.csv
+  manual_walk_forward_combined: data/reports/manual_weak_turning_walk_forward_combined.csv
+  manual_optimized_signals: data/reports/manual_weak_optimized_turning_signals.csv
+  manual_optimized_summary: data/reports/manual_weak_optimized_turning_summary.csv
+  label_report: data/reports/bottom_label_baseline_v0_3_15d.csv
+  walk_forward_detail: data/reports/bottom_walk_forward_v0_3_15d_details.csv
+  walk_forward_summary: data/reports/bottom_walk_forward_v0_3_15d_summary.csv
+  walk_forward_aggregate: data/reports/bottom_walk_forward_v0_3_15d_aggregate.csv
+  risk_gate_detail: data/reports/bottom_risk_gate_v0_3_15d_details.csv
+  risk_gate_summary: data/reports/bottom_risk_gate_v0_3_15d_summary.csv
+  weekly_ablation: data/reports/bottom_weekly_ablation_v0_3_15d.csv
