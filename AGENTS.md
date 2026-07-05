@@ -31,7 +31,8 @@
 
 - `feature/buy-signal-research` 是当前主研究分支
 - 这个分支负责把握整体项目节奏、信号质量、标签设计、特征取舍和模型结构
-- 其他分支只提供原始数据、事件抽取或回测能力，不在别处分支独立决定模型策略
+- `feature/data-collectors` 负责原始数据获取、清洗、时间戳校验和入库
+- 其他分支只提供原始数据、事件抽取、回测、展示或临时分析能力，不在别处分支独立决定模型策略
 
 ## 工作方式
 
@@ -47,3 +48,4 @@
 - 买入模型：`docs/architecture/buy_model.md`
 - 数据来源：`docs/architecture/data_sources.md`
 - Worktree 约定：`docs/architecture/worktree_map.md`
+- 入口拆分总规：`docs/architecture/entry_split_guideline.md`
