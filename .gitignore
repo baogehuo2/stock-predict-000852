@@ -7,9 +7,18 @@ __pycache__/
 config/secrets.key
 config/secrets.plain.yaml
 
-data/
+data/*
 logs/
-models/
+models/*
+outputs/
+
+!data/
+!data/manual_labels/
+data/manual_labels/*
+!data/manual_labels/market_turning_regions.csv
+!models/
+!models/manual_weak_bottom_zone_v0_1.joblib
+!models/manual_weak_top_zone_v0_1.joblib
 
 *.log
 *.tmp

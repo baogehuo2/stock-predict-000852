@@ -132,3 +132,28 @@ python .\src\collectors\collect_guba_history_playwright.py --bar-name 中证1000
 ```
 
 浏览器会话保存在 `data/browser/eastmoney`，通过验证码后的 cookie 会保留，后续可复用。
+# 抄底模型研究流程
+
+`feature/bottom-fishing-v1` 使用独立数据库 `zz1000_botumn`，研究产物不写入
+Buy 1.0 的模型、特征清单或 `buy_signal_daily`。
+
+第一阶段命令：
+
+```powershell
+python -m src.features.build_bottom_dataset
+python -m src.features.build_manual_turning_labels
+python -m src.modeling.evaluate_bottom_labels
+python -m src.modeling.walk_forward_bottom_lgbm --label quality_bottom_label
+python -m src.modeling.evaluate_bottom_risk_gate
+python -m src.modeling.evaluate_bottom_weekly_ablation
+python -m src.modeling.evaluate_bottom_weekly_rules
+python -m src.modeling.train_manual_turning_models --model-kind logistic
+python -m src.modeling.train_manual_turning_models --model-kind lightgbm --walk-forward --start-year 2022
+```
+
+当前版本为 `bottom-fishing-v0.3` 的15交易日研究基线。周线使用截至每个交易日的本周累计
+OHLCV 与此前已完成周线，禁止使用当周未来交易日。流程只生成研究数据表和 CSV 报告，
+不训练正式发布模型，不生成日常抄底信号。
+
+人工底/顶区域属于 `post_hoc_weak` 弱监督标签：用于学习形态和贴合人工经验，
+不作为无泄漏实时买卖标签；模型优先按客观15日收益、MFE、MAE和风险指标验收。
