@@ -1,5 +1,5 @@
 database:
-  expected_name: zz1000_botumn
+  expected_name: zz1000_predict
 
 model:
   model_version: bottom-fishing-v0.3
