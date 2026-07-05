@@ -10,6 +10,7 @@ config/secrets.plain.yaml
 data/
 logs/
 models/
+backups/
 
 *.log
 *.tmp

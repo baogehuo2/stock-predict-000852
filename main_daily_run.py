@@ -2,26 +2,38 @@ from __future__ import annotations
 
 import argparse
 
+from src.collectors.collect_calendar_daily_v2 import collect_calendar_daily
+from src.collectors.collect_event_calendar_v2 import collect_event_calendar
+from src.collectors.collect_event_raw_v4 import collect_event_raw_v4
 from src.collectors.collect_etf_akshare import collect_etfs
 from src.collectors.collect_futures_akshare import collect_futures
+from src.collectors.collect_global_market_v2 import collect_global_market
 from src.collectors.collect_guba_eastmoney import collect_guba
 from src.collectors.collect_index_akshare import collect_indices
+from src.collectors.collect_macro_forecast_calendar_v2 import collect_macro_forecast_calendar
+from src.collectors.collect_macro_release_v2 import collect_macro_release
+from src.collectors.collect_macro_release_time_reference_v2 import collect_macro_release_time_reference
+from src.collectors.collect_market_index_periodic_v25 import collect_market_index_periodic
 from src.collectors.collect_news import collect_news
+from src.collectors.collect_zz1000_history_tushare import collect_history_backfill
+from src.collectors.collect_zz1000_snapshot_v2 import collect_current_snapshot
 from src.common.config import ensure_project_dirs
 from src.common.config import get_config
 from src.common.db import init_database
 from src.common.logger import get_logger
 from src.common.network import disable_env_proxies
-from src.features.build_market_features import build_market_features
-from src.features.build_model_dataset import build_model_dataset
-from src.features.build_sentiment_features import build_sentiment_features
 from src.llm.extract_event import extract_events_for_recent_news
-from src.modeling.predict import predict
-from src.modeling.train_lgbm import train_models
-from src.report.generate_html_report import generate_html_report
 
 
 logger = get_logger(__name__)
+
+
+def _lazy_call(module_path: str, function_name: str):
+    def _runner():
+        module = __import__(module_path, fromlist=[function_name])
+        return getattr(module, function_name)()
+
+    return _runner
 
 STEPS = {
     "init_db": init_database,
@@ -30,13 +42,23 @@ STEPS = {
     "collect_futures": collect_futures,
     "collect_guba": collect_guba,
     "collect_news": collect_news,
-    "build_market_features": build_market_features,
-    "build_sentiment_features": build_sentiment_features,
+    "collect_zz1000_snapshot": collect_current_snapshot,
+    "collect_zz1000_history_backfill": collect_history_backfill,
+    "collect_calendar_daily_v2": collect_calendar_daily,
+    "collect_event_calendar_v2": collect_event_calendar,
+    "collect_event_raw_v4": collect_event_raw_v4,
+    "collect_macro_forecast_calendar_v2": collect_macro_forecast_calendar,
+    "collect_macro_release_time_reference_v2": collect_macro_release_time_reference,
+    "collect_macro_release_v2": collect_macro_release,
+    "collect_global_market_v2": collect_global_market,
+    "collect_market_index_periodic_v25": collect_market_index_periodic,
+    "build_market_features": _lazy_call("src.features.build_market_features", "build_market_features"),
+    "build_sentiment_features": _lazy_call("src.features.build_sentiment_features", "build_sentiment_features"),
     "extract_events": extract_events_for_recent_news,
-    "build_dataset": build_model_dataset,
-    "train": train_models,
-    "predict": predict,
-    "report": generate_html_report,
+    "build_dataset": _lazy_call("src.features.build_model_dataset", "build_model_dataset"),
+    "train": _lazy_call("src.modeling.train_lgbm", "train_models"),
+    "predict": _lazy_call("src.modeling.predict", "predict"),
+    "report": _lazy_call("src.report.generate_html_report", "generate_html_report"),
 }
 
 DEFAULT_FLOW = [
@@ -46,6 +68,16 @@ DEFAULT_FLOW = [
     "collect_futures",
     "collect_guba",
     "collect_news",
+    "collect_zz1000_snapshot",
+    "collect_zz1000_history_backfill",
+    "collect_calendar_daily_v2",
+    "collect_event_calendar_v2",
+    "collect_event_raw_v4",
+    "collect_macro_forecast_calendar_v2",
+    "collect_macro_release_time_reference_v2",
+    "collect_macro_release_v2",
+    "collect_global_market_v2",
+    "collect_market_index_periodic_v25",
     "build_market_features",
     "build_sentiment_features",
     "extract_events",
