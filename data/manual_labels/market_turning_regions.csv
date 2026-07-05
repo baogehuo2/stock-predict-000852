@@ -1,0 +1,84 @@
+﻿region_id,start_date,end_date,region_type,cycle,level,label_freq,confidence,usable_for_signal,entry_start,entry_end,exit_start,exit_end,reason,notes
+B201501_daily_short_01,2015-01-27,2015-02-12,bottom,short,minor,daily,2,1,2015-02-11,2015-02-12,,,technical_pullback,
+B201503_daily_short_01,2015-03-26,2015-04-01,bottom,short,swing,daily,2,1,2015-03-30,2015-03-31,,,technical_pullback,
+B201504_daily_medium_01,2015-04-08,2015-05-08,bottom,medium,major,daily,2,1,2015-04-17,2015-05-08,,,technical_pullback,
+B201504_daily_short_01,2015-04-30,2015-05-13,bottom,short,swing,daily,2,1,2015-05-07,2015-05-07,,,candidate_bottom,大模型辅助候选，需人工确认 pivot=2015-05-07|future_window=15d|future_max_ret=38.51%|prior_drawdown=-4.51%|rsi6=47.7
+T201505_monthly_long_01,2015-05-28,2015-06-25,top,long,major,monthly,2,1,,,2015-06-12,2015-06-15,candidate_top|high_valuation,大模型辅助候选，需人工确认 pivot=2015-06-12|future_window=120d|future_min_ret=-53.12%|prior_rise=148.05%|rsi6=74.4
+B201507_daily_short_01,2015-07-06,2015-07-10,bottom,short,minor,daily,2,1,2015-07-08,2015-07-09,,,oversold_rebound,
+T201507_weekly_short_01,2015-07-21,2015-07-27,top,short,minor,weekly,2,1,,,2015-07-23,2015-07-24,,
+B201507_daily_short_02,2015-07-31,2015-08-07,bottom,short,swing,daily,2,1,2015-08-03,2015-08-05,,,,
+T201508_daily_short_01,2015-08-17,2015-08-20,top,short,swing,daily,2,1,,,2015-08-18,2015-08-18,,
+B201508_daily_medium_01,2015-08-26,2015-09-30,bottom,medium,swing,daily,2,1,2015-09-15,2015-09-30,,,candidate_bottom,大模型辅助候选，需人工确认 pivot=2015-09-15|future_window=15d|future_max_ret=22.97%|prior_drawdown=-17.30%|rsi6=42.9
+T201511_daily_short_01,2015-11-27,2016-01-05,top,short,swing,daily,2,1,,,2015-12-22,2015-12-31,weekly_boll_upper,
+B201601_daily_short_01,2016-01-26,2016-02-02,bottom,short,swing,daily,2,1,2016-01-28,2016-02-01,,,,
+B201602_daily_short_01,2016-02-26,2016-03-16,bottom,short,swing,daily,2,1,2016-02-29,2016-03-16,,,,
+T201604_weekly_short_01,2016-04-12,2016-04-20,top,short,minor,weekly,2,1,,,2016-04-18,2016-04-19,,
+B201605_daily_short_01,2016-05-11,2016-05-30,bottom,short,swing,daily,2,1,2016-05-12,2016-05-18,,,,
+T201607_daily_short_01,2016-07-04,2016-07-22,top,short,swing,daily,2,1,,,2016-07-15,2016-07-22,,
+B201607_daily_short_01,2016-07-27,2016-08-12,bottom,short,swing,daily,2,1,2016-08-01,2016-08-02,,,,
+B201609_daily_short_01,2016-09-12,2016-09-27,bottom,short,minor,daily,2,1,2016-09-26,2016-09-27,,,,
+B201611_weekly_medium_01,2016-11-10,2016-11-28,top,medium,swing,weekly,2,1,,,2016-11-17,2016-11-23,weekly_boll_upper,
+B201701_daily_medium_01,2017-01-16,2017-01-23,bottom,medium,minor,daily,2,1,2017-01-16,2017-01-19,,,,
+B201703_daily_short_01,2017-03-13,2017-04-14,top,short,swing,daily,2,1,,,2017-03-27,2017-03-28,weekly_kdj_dead_cross,
+B201705_daily_short_01,2017-05-23,2017-06-06,bottom,short,swing,daily,2,1,2017-05-23,2017-06-01,,,,
+B201707_daily_short_01,2017-07-12,2017-07-24,bottom,short,swing,daily,2,1,2017-07-18,2017-07-24,,,candidate_bottom,大模型辅助候选，需人工确认 pivot=2017-07-18|future_window=15d|future_max_ret=5.08%|prior_drawdown=-6.74%|below_boll_2|rsi6=10.3
+T201709_monthly_long_01,2017-09-04,2017-11-10,top,long,major,monthly,2,1,,,2017-10-16,2017-10-18,candidate_top,大模型辅助候选，需人工确认 pivot=2017-10-11|future_window=120d|future_min_ret=-23.97%|prior_rise=13.47%|rsi6=79.4
+T201801_daily_short_01,2018-01-19,2018-01-31,top,short,swing,daily,2,1,,,2018-01-29,2018-01-29,candidate_top,大模型辅助候选，需人工确认 pivot=2018-01-25|future_window=15d|future_min_ret=-14.30%|prior_rise=1.92%|rsi6=84.6
+B201802_daily_short_01,2018-02-05,2018-02-22,bottom,short,swing,daily,2,1,2018-02-07,2018-02-09,,,candidate_bottom,大模型辅助候选，需人工确认 pivot=2018-02-09|future_window=15d|future_max_ret=12.95%|prior_drawdown=-14.41%|rsi6=14.8
+B201803_daily_short_01,2018-03-12,2018-03-16,top,short,swing,daily,2,1,,,2018-03-12,2018-03-16,,
+B201810_daily_short_01,2018-10-11,2018-11-02,bottom,short,swing,daily,2,1,2018-10-16,2018-10-19,,,,
+B201901_daily_short_01,2019-01-25,2019-02-13,bottom,short,swing,daily,2,1,2019-01-30,2019-01-31,,,candidate_bottom,大模型辅助候选，需人工确认 pivot=2019-01-31|future_window=15d|future_max_ret=22.38%|prior_drawdown=-6.43%|below_boll_2|rsi6=8.5
+T201903_weekly_long_01,2019-03-06,2019-03-22,top,long,major,weekly,2,1,,,2019-03-11,2019-03-11,candidate_top|weekly_boll_upper,大模型辅助候选，需人工确认 pivot=2019-04-08|future_window=120d|future_min_ret=-21.84%|prior_rise=50.15%|rsi6=94.5
+T201904_daily_short_01,2019-04-01,2019-04-12,top,short,swing,daily,2,1,,,2019-04-01,2019-04-08,candidate_top,大模型辅助候选，需人工确认 pivot=2019-04-08|future_window=15d|future_min_ret=-9.75%|prior_rise=8.39%|rsi6=94.5
+B201907_daily_short_01,2019-07-31,2019-08-12,bottom,medium,swing,daily,2,1,2019-08-06,2019-08-09,,,candidate_bottom,大模型辅助候选，需人工确认 pivot=2019-08-06|future_window=15d|future_max_ret=7.49%|prior_drawdown=-7.37%|below_boll_2|rsi6=5.7
+T201909_daily_short_01,2019-09-09,2019-09-18,top,short,swing,daily,2,1,,,2019-09-16,2019-09-16,,
+B201911_daily_short_01,2019-11-22,2019-12-04,bottom,short,swing,daily,2,1,2019-11-25,2019-11-29,,,,
+B202001_daily_short_01,2020-02-03,2020-02-05,bottom,short,swing,daily,2,1,2020-02-04,2020-02-04,,,candidate_bottom|covid,大模型辅助候选，需人工确认 pivot=2020-02-04|future_window=15d|future_max_ret=22.93%|prior_drawdown=-12.47%|below_boll_2|rsi6=12.0
+T202002_weekly_short_01,2020-02-19,2020-03-02,top,short,swing,monthly,2,1,,,2020-02-26,2020-02-27,candidate_top|weekly_boll_upper|monthly_boll_upper,大模型辅助候选，需人工确认 pivot=2020-02-25|future_window=15d|future_min_ret=-11.93%|prior_rise=19.80%|rsi6=90.6
+B202003_daily_long_01,2020-03-16,2020-04-30,bottom,long,major,daily,2,1,2020-03-24,2020-03-30,,,,
+T202007_weekly_long_01,2020-07-09,2020-08-20,top,long,swing,weekly,2,1,,,2020-07-14,2020-08-20,candidate_top,大模型辅助候选，需人工确认 pivot=2020-08-06|future_window=40d|future_min_ret=-11.87%|prior_rise=23.32%|rsi6=88.0
+T202007_weekly_medium_01,2020-07-09,2020-08-20,top,medium,swing,daily,2,1,,,2020-07-23,2020-08-06,candidate_top,大模型辅助候选，需人工确认 pivot=2020-08-06|future_window=40d|future_min_ret=-11.87%|prior_rise=23.32%|rsi6=88.0
+T202007_daily_medium_01,2020-07-09,2020-08-20,top,medium,swing,weekly,2,1,,,2020-07-23,2020-08-06,candidate_top,大模型辅助候选，需人工确认 pivot=2020-08-06|future_window=40d|future_min_ret=-11.87%|prior_rise=23.32%|rsi6=88.0
+T202101_daily_short_01,2021-01-04,2021-01-07,top,short,swing,daily,2,1,,,2021-01-04,2021-01-07,,
+B202101_weekly_long_01,2021-01-28,2021-02-10,bottom,long,major,weekly,2,1,2021-02-05,2021-02-06,,,,
+T202104_daily_short_01,2021-04-19,2021-04-26,top,short,swing,daily,2,1,,,2021-04-19,2021-04-26,,
+B202106_daily_short_01,2021-06-11,2021-06-18,bottom,short,swing,daily,2,1,2021-06-16,2021-06-17,,,,
+B202107_daily_short_01,2021-07-02,2021-07-07,bottom,short,swing,daily,2,1,2021-07-02,2021-07-07,,,,
+B202107_daily_short_02,2021-07-28,2021-07-29,bottom,short,swing,daily,2,1,2021-07-28,2021-07-29,,,,
+B202109_daily_medium_01,2021-09-03,2021-09-27,top,medium,swing,daily,2,1,,,2021-09-03,2021-09-27,volume_shrink,
+T202110_monthly_long_01,2021-11-22,2021-12-30,top,long,major,monthly,2,1,,,2021-12-01,2021-12-07,candidate_top,大模型辅助候选，需人工确认 pivot=2021-11-30|future_window=120d|future_min_ret=-34.61%|prior_rise=20.70%|rsi6=85.6
+B202201_daily_short_01,2022-01-24,2022-02-10,bottom,short,swing,daily,2,1,2022-01-27,2022-01-28,,,candidate_bottom,大模型辅助候选，需人工确认 pivot=2022-01-28|future_window=15d|future_max_ret=6.85%|prior_drawdown=-10.70%|below_boll_2|rsi6=12.6
+B202202_daily_short_01,2022-02-22,2022-03-04,top,short,swing,daily,2,1,,,2022-02-22,2022-03-04,global_risk,
+B202203_daily_short_01,2022-03-15,2022-03-17,bottom,short,swing,daily,2,1,2022-03-15,2022-03-17,,,oversold_rebound,
+T202203_daily_short_01,2022-03-22,2022-03-25,top,medium,swing,daily,2,1,,,2022-03-22,2022-03-25,,
+B202204_monthly_short_01,2022-04-21,2022-05-06,bottom,short,swing,monthly,2,1,2022-04-25,2022-04-28,,,candidate_bottom|monthly_boll_lower,大模型辅助候选，需人工确认 pivot=2022-04-27|future_window=15d|future_max_ret=14.49%|prior_drawdown=-16.35%|rsi6=20.3
+T202207_daily_short_01,2022-07-07,2022-08-24,top,short,swing,daily,2,1,,,2022-08-19,2022-08-24,,
+B202209_weekly_medium_01,2022-09-26,2022-10-13,bottom,medium,swing,weekly,2,1,2022-10-10,2022-10-12,,,,
+B202212_daily_short_01,2022-12-20,2022-12-27,bottom,short,swing,daily,2,1,2022-12-22,2022-12-26,,,,
+B202302_weekly_short_01,2023-02-01,2023-03-08,top,long,swing,weekly,2,1,,,2023-02-01,2023-03-08,weekly_boll_upper,
+T202304_daily_short_01,2023-04-03,2023-04-17,top,short,swing,daily,2,1,,,2023-04-03,2023-04-10,,
+T202306_daily_short_01,2023-06-15,2023-06-21,top,short,swing,daily,2,1,,,2023-06-16,2023-06-17,,
+B202401_daily_short_01,2024-01-30,2024-02-19,bottom,short,swing,daily,2,1,2024-02-02,2024-02-05,,,candidate_bottom,大模型辅助候选，需人工确认 pivot=2024-02-05|future_window=15d|future_max_ret=26.44%|prior_drawdown=-22.50%|below_boll_2|rsi6=0.0
+T202403_daily_short_01,2024-03-18,2024-03-22,top,short,swing,daily,2,1,,,2024-03-22,2024-03-22,,
+B202404_daily_short_01,2024-04-15,2024-04-24,bottom,short,swing,daily,2,1,2024-04-16,2024-04-17,,,,
+B202405_weekly_long_01,2024-05-07,2024-05-17,top,long,major,weekly,2,1,,,2024-05-10,2024-05-11,,
+B202409_daily_short_01,2024-09-10,2024-09-24,bottom,short,swing,weekly,2,1,2024-09-18,2024-09-24,,,candidate_bottom,大模型辅助候选，需人工确认 pivot=2024-09-18|future_window=15d|future_max_ret=40.98%|prior_drawdown=-4.97%|rsi6=9.0
+T202409_weekly_short_01,2024-09-30,2024-10-10,top,short,swing,weekly,2,1,,,2024-09-30,2024-10-08,weekly_boll_upper,
+B202411_daily_short_01,2024-11-27,2024-11-29,bottom,short,swing,daily,2,1,2024-11-29,2024-11-29,,,,
+T202412_daily_short_01,2024-12-10,2024-12-13,top,short,swing,daily,2,1,,,2024-12-11,2024-12-12,,
+B202501_daily_short_01,2025-01-06,2025-01-14,bottom,medium,swing,weekly,2,1,2025-01-06,2025-01-10,,,,
+T202503_weekly_medium_01,2025-03-11,2025-03-20,top,medium,swing,weekly,2,1,,,2025-03-11,2025-03-20,,
+B202504_weekly_short_01,2025-04-07,2025-04-14,bottom,short,swing,weekly,2,1,2025-04-07,2025-04-14,,,,
+T202506_daily_short_01,2025-06-09,2025-06-11,top,short,swing,daily,2,1,,,2025-06-09,2025-06-11,,
+B202506_daily_short_01,2025-06-19,2025-06-24,bottom,short,swing,daily,2,1,2025-06-19,2025-06-24,,,,
+T202508_daily_long_01,2025-08-26,2025-09-05,top,long,minor,daily,2,1,,,2025-09-01,2025-09-02,,
+T202509_daily_short_01,2025-09-16,2025-09-22,top,short,swing,daily,2,1,,,2025-09-16,2025-09-22,,
+B202510_daily_short_01,2025-10-15,2025-10-21,bottom,short,swing,daily,2,1,2025-10-15,2025-10-21,,,,
+B202510_monthly_long_01,2025-10-23,2025-12-24,bottom,long,major,monthly,2,1,2025-11-24,2025-12-24,,,candidate_bottom,大模型辅助候选，需人工确认 pivot=2025-11-24|future_window=120d|future_max_ret=25.14%|prior_drawdown=-6.43%|below_boll_2|rsi6=19.3
+B202511_weekly_medium_02,2025-11-10,2025-12-08,bottom,medium,swing,weekly,2,1,2025-11-24,2025-12-08,,,candidate_bottom,大模型辅助候选，需人工确认 pivot=2025-11-24|future_window=40d|future_max_ret=16.78%|prior_drawdown=-6.43%|below_boll_2|rsi6=19.3
+B202511_daily_short_01,2025-11-20,2025-11-26,bottom,short,swing,daily,2,1,2025-11-20,2025-11-26,,,,
+B202601_monthly_short_01,2026-01-12,2026-03-03,top,short,swing,monthly,2,1,,,2026-01-12,2026-03-03,monthly_boll_upper,
+B202602_daily_short_01,2026-02-02,2026-02-06,bottom,short,swing,daily,2,1,2026-02-02,2026-02-06,,,,
+T202602_daily_short_01,2026-02-26,2026-03-02,top,short,swing,daily,2,1,,,2026-02-26,2026-03-02,,
+B202603_daily_short_01,2026-03-20,2026-03-26,bottom,short,swing,daily,2,1,2026-03-20,2026-03-26,,,,
+T202605_daily_short_01,2026-05-08,2026-05-18,top,short,swing,daily,2,1,,,2026-05-08,2026-05-18,,
