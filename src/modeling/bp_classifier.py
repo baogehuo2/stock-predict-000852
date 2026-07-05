@@ -28,8 +28,6 @@ class BPNeuralNetworkClassifier(BaseEstimator, ClassifierMixin):
         batch_size: int = 128,
         patience: int = 20,
         positive_weight: float = 1.0,
-        focal_gamma: float = 0.0,
-        focal_alpha: float = 0.5,
         random_state: int = 42,
     ) -> None:
         self.hidden_layers = hidden_layers
@@ -40,8 +38,6 @@ class BPNeuralNetworkClassifier(BaseEstimator, ClassifierMixin):
         self.batch_size = batch_size
         self.patience = patience
         self.positive_weight = positive_weight
-        self.focal_gamma = focal_gamma
-        self.focal_alpha = focal_alpha
         self.random_state = random_state
 
     def fit(self, x, y, sample_weight=None):
@@ -143,17 +139,6 @@ class BPNeuralNetworkClassifier(BaseEstimator, ClassifierMixin):
             optimizer.zero_grad()
             logits = self.model_(features).reshape(-1)
             loss = criterion(logits, target)
-            gamma = float(self.focal_gamma)
-            if gamma > 0:
-                proba = torch.sigmoid(logits).detach()
-                pt = torch.where(target > 0.5, proba, 1.0 - proba).clamp(1e-6, 1.0 - 1e-6)
-                alpha = float(self.focal_alpha)
-                alpha_t = torch.where(
-                    target > 0.5,
-                    torch.full_like(target, alpha),
-                    torch.full_like(target, 1.0 - alpha),
-                )
-                loss = loss * alpha_t * torch.pow(1.0 - pt, gamma)
             weighted_loss = (loss * sample_weight).sum() / sample_weight.sum().clamp_min(1e-6)
             weighted_loss.backward()
             optimizer.step()
