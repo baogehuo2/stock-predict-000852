@@ -17,11 +17,10 @@ from src.collectors.collect_market_index_periodic_v25 import collect_market_inde
 from src.collectors.collect_news import collect_news
 from src.collectors.collect_zz1000_history_tushare import collect_history_backfill
 from src.collectors.collect_zz1000_snapshot_v2 import collect_current_snapshot
-from src.common.config import ensure_project_dirs
 from src.common.config import get_config
 from src.common.db import init_database
-from src.common.logger import get_logger
 from src.common.network import disable_env_proxies
+from src.common.pipeline_entry import run_named_steps
 from src.features.build_market_features import build_market_features
 from src.features.build_model_dataset import build_model_dataset
 from src.features.build_sentiment_features import build_sentiment_features
@@ -34,8 +33,6 @@ from src.modeling.train_lgbm import train_models
 from src.report.generate_buy_signal_report import generate_buy_signal_report
 from src.report.generate_html_report import generate_html_report
 
-
-logger = get_logger(__name__)
 
 STEPS = {
     "init_db": init_database,
@@ -94,21 +91,21 @@ DEFAULT_FLOW = [
 
 
 def run_steps(steps: list[str], continue_on_error: bool = True) -> None:
-    ensure_project_dirs()
     cfg = get_config()
     use_guba_sentiment = bool(cfg.get("features", {}).get("use_guba_sentiment", False))
-    for step in steps:
+
+    def skip_step(step: str) -> bool:
         if step == "build_sentiment_features" and not use_guba_sentiment:
-            logger.info("skip step=%s because features.use_guba_sentiment=false", step)
-            continue
-        logger.info("start step=%s", step)
-        try:
-            result = STEPS[step]()
-            logger.info("finish step=%s result=%s", step, result)
-        except Exception:
-            logger.exception("failed step=%s", step)
-            if not continue_on_error or step == "extract_events":
-                raise
+            return True
+        return False
+
+    run_named_steps(
+        steps,
+        STEPS,
+        continue_on_error=continue_on_error,
+        skip_step=skip_step,
+        stop_on_error_steps={"extract_events"},
+    )
 
 
 def main() -> None:
