@@ -6,23 +6,23 @@
 
 ## 入口边界
 
-`main_daily_run.py` 是看板专用入口，只保留展示相关 step：
+`run_buy_signal_dashboard.py` 是看板专用入口，只保留展示相关 step；`main_daily_run.py` 不承载本分支的看板流程：
 
 ```powershell
-python .\main_daily_run.py --step report_buy_signal
-python .\main_daily_run.py --step report_walk_forward_buy
+python .\run_buy_signal_dashboard.py --step report_buy_signal
+python .\run_buy_signal_dashboard.py --step report_walk_forward_buy
 ```
 
 默认运行：
 
 ```powershell
-python .\main_daily_run.py
+python .\run_buy_signal_dashboard.py
 ```
 
 等价于：
 
 ```powershell
-python .\main_daily_run.py --step report_buy_signal
+python .\run_buy_signal_dashboard.py --step report_buy_signal
 ```
 
 也可以使用包装脚本：
@@ -37,7 +37,7 @@ python .\main_daily_run.py --step report_buy_signal
 命令：
 
 ```powershell
-python .\main_daily_run.py --step report_buy_signal
+python .\run_buy_signal_dashboard.py --step report_buy_signal
 ```
 
 输出：
@@ -64,7 +64,7 @@ data/reports/buy_signal_v1_dashboard.html
 命令：
 
 ```powershell
-python .\main_daily_run.py --step report_walk_forward_buy
+python .\run_buy_signal_dashboard.py --step report_walk_forward_buy
 ```
 
 输出：

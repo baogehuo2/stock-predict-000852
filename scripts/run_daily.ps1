@@ -8,8 +8,8 @@ $ProjectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $ProjectRoot
 
 if ($Step -eq "") {
-    python .\main_daily_run.py
+    python .\run_buy_signal_dashboard.py
 } else {
-    python .\main_daily_run.py --step $Step
+    python .\run_buy_signal_dashboard.py --step $Step
 }
 
