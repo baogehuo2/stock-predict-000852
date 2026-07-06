@@ -2,6 +2,32 @@
 
 ## 启动
 
+推荐使用专用入口：
+
+```powershell
+python .\main_turning_label_tool_run.py --target zz1000
+python .\main_turning_label_tool_run.py --target hs300
+python .\main_turning_label_tool_run.py --target zz1000-weekly
+python .\main_turning_label_tool_run.py --target hs300-weekly
+```
+
+默认端口：
+
+```text
+zz1000        http://127.0.0.1:8765
+hs300         http://127.0.0.1:8766
+zz1000-weekly http://127.0.0.1:8775
+hs300-weekly  http://127.0.0.1:8776
+```
+
+验证参数但不启动服务：
+
+```powershell
+python .\main_turning_label_tool_run.py --target zz1000-weekly --dry-run
+```
+
+底层入口仍可直接使用。
+
 在项目根目录运行：
 
 ```powershell
