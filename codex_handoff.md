@@ -26,7 +26,7 @@ The user requested a standalone HTML dashboard for the frozen model output. This
 Run:
 
 ```powershell
-python .\main_daily_run.py --step report_buy_signal
+python .\run_buy_signal_dashboard.py --step report_buy_signal
 ```
 
 Output:
@@ -47,7 +47,8 @@ The report reads `buy_signal_daily` and `market_index_daily` from MySQL and disp
 ## Files Changed
 
 - `src/report/generate_buy_signal_report.py`: standalone HTML dashboard generator.
-- `main_daily_run.py`: registers the `report_buy_signal` step.
+- `run_buy_signal_dashboard.py`: standalone dashboard entry for `report_buy_signal` and `report_walk_forward_buy`.
+- `main_daily_run.py`: keeps the main daily pipeline and does not register dashboard steps.
 - `README.md`: documents the command and output path.
 - `codex_handoff.md`: this handoff record.
 
@@ -56,9 +57,9 @@ The report reads `buy_signal_daily` and `market_index_daily` from MySQL and disp
 The following checks passed:
 
 ```powershell
-python -m py_compile .\src\report\generate_buy_signal_report.py .\main_daily_run.py
+python -m py_compile .\src\report\generate_buy_signal_report.py .\run_buy_signal_dashboard.py
 git diff --check
-python .\main_daily_run.py --step report_buy_signal --stop-on-error
+python .\run_buy_signal_dashboard.py --step report_buy_signal --stop-on-error
 ```
 
 The command generated the HTML successfully. At verification time, `buy_signal_daily` contained only one Model 1.0 signal dated `2026-05-15`, so the dashboard correctly showed limited history and no realized 7-day result. Once data and signals are updated through `2026-06-10`, rerunning the same command will expand the charts automatically.

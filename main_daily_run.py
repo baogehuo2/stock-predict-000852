@@ -95,9 +95,7 @@ def run_steps(steps: list[str], continue_on_error: bool = True) -> None:
     use_guba_sentiment = bool(cfg.get("features", {}).get("use_guba_sentiment", False))
 
     def skip_step(step: str) -> bool:
-        if step == "build_sentiment_features" and not use_guba_sentiment:
-            return True
-        return False
+        return step == "build_sentiment_features" and not use_guba_sentiment
 
     run_named_steps(
         steps,
